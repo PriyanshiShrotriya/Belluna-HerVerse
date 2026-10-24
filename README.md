@@ -100,7 +100,6 @@ cp .dev.vars.example .dev.vars  # server-side secrets for Pages Functions (never
 | `GROQ_API_KEY` | `.dev.vars` / versel | **Secret** |
 | `GROQ_MODEL` | `.dev.vars` / versel | Check Groq's current free-tier model list before choosing |
 | `LLM_PROVIDER` | `.dev.vars` / versel | `groq` (default); provider abstraction allows `gemini` |
-| `AI_DAILY_LIMIT` | `.dev.vars` / versel | Per-user daily request cap |
 
 Never put the service-role key or any LLM key in a `VITE_` variable.
 
@@ -111,6 +110,19 @@ npx supabase link --project-ref <ref>
 npx supabase db push            # applies supabase/migrations/*
 npx supabase gen types typescript --linked > src/types/database.ts
 ```
+
+Before enabling AI requests, configure the per-user daily quota in the Supabase SQL Editor as the project/database owner. Replace `<approved_positive_integer>` with the limit approved by the team; do not expose this configuration to client roles:
+```sql
+insert into public.ai_quota_config (id, daily_limit)
+values (1, <approved_positive_integer>)
+on conflict (id) do update set daily_limit = excluded.daily_limit;
+```
+The migration deliberately seeds no limit. The `consume_ai_quota()` RPC fails closed until a valid positive limit is configured. `service_role` has no table privileges for this setting; configure it as the database owner/admin using the SQL Editor, not through a service-role API call.
+
+Before enabling AI requests, the server-side `/api/explain` implementation must call `consume_ai_quota()` as the authenticated user and stop before calling the AI provider if it returns `false`. Treat an RPC error or missing quota configuration as a failure and do not call the provider. No AI backend implementation is present in this repository yet, so quota enforcement at the provider boundary remains a required implementation task.
+
+The migration adds `chat_messages` to Supabase's `supabase_realtime` publication only if it is not already a member. If that publication is absent, the migration stops with an instruction to enable Realtime for `chat_messages` in Supabase before rerunning the fresh-install migration.
+
 Enable **Anonymous sign-ins** in Supabase Auth settings if the chat uses them.
 
 ### Run locally

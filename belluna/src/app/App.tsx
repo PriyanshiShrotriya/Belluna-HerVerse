@@ -20,7 +20,11 @@ const MedicineLibrary = lazy(() => import('../features/medicines/MedicineLibrary
 const Awareness = lazy(() => import('../features/learn/Awareness'));
 const Community = lazy(() => import('../features/community/Community'));
 
-function Home() { const { session } = useAuth(); return session ? <Dashboard /> : <Landing />; }
+function Home() {
+  const { session, loading } = useAuth();
+  if (loading) return <Loading />;
+  return session ? <Dashboard /> : <Landing />;
+}
 
 export default function App() {
   return (

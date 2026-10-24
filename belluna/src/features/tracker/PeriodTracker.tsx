@@ -1,5 +1,10 @@
-import { useState, useEffect } from 'react';
+
+import { useState, useEffect, useRef } from 'react';
 import { ChevronLeft, ChevronRight, Droplets, Zap, Smile, Save, CalendarHeart } from 'lucide-react';
+import { getDailyLogs, saveDailyLog } from './dailyLogsService';
+import { useAuth } from '../../app/stubs/auth';
+import { loadTrackerLogs, saveTrackerLogs } from './trackerStorage';
+
 
 type Log = { flow: number; pain: number; mood: number; notes: string };
 type Logs = Record<string, Log>; // key: "YYYY-MM-DD"
@@ -42,19 +47,100 @@ function predictNext(logs: Logs): number | null {
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 export default function PeriodTracker() {
+  const { session } = useAuth();
+  const userId = session?.userId ?? null;
+  const activeUserId = useRef(userId);
+  activeUserId.current = userId;
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [selected, setSelected] = useState<string | null>(null);
-  const [logs, setLogs] = useState<Logs>(() => {
-    try { return JSON.parse(localStorage.getItem('belluna.tracker') || '{}'); } catch { return {}; }
-  });
+  const [logs, setLogs] = useState<Logs>({});
+  const [loadedUserId, setLoadedUserId] = useState<string | null>(null);
   const [form, setForm] = useState<Log>({ flow: 0, pain: 0, mood: 2, notes: '' });
   const [saved, setSaved] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    localStorage.setItem('belluna.tracker', JSON.stringify(logs));
-  }, [logs]);
+
+useEffect(() => {
+  if (!loading && userId && loadedUserId === userId) {
+    saveTrackerLogs(userId, logs, window.localStorage);
+  }
+}, [logs, loading, userId, loadedUserId]);
+
+
+useEffect(() => {
+  let cancelled = false;
+
+  setSelected(null);
+  setForm({ flow: 0, pain: 0, mood: 2, notes: '' });
+  setSaved(false);
+  setError('');
+
+  if (!userId) {
+    setLogs({});
+    setLoadedUserId(null);
+    setLoading(false);
+    return () => {
+      cancelled = true;
+    };
+  }
+
+  const authenticatedUserId = userId;
+
+  async function loadLogs() {
+    setLoading(true);
+
+    try {
+      const localLogs = loadTrackerLogs(authenticatedUserId, window.localStorage);
+      setLogs(localLogs);
+      setLoadedUserId(authenticatedUserId);
+      const cloudLogs = await getDailyLogs(authenticatedUserId);
+
+      if (cancelled) return;
+
+      const mergedLogs: Logs = { ...localLogs, ...cloudLogs };
+      setLogs(mergedLogs);
+
+      for (const [date, log] of Object.entries(localLogs)) {
+        if (!Object.prototype.hasOwnProperty.call(cloudLogs, date)) {
+          try {
+            await saveDailyLog(authenticatedUserId, date, log);
+          } catch {
+            if (!cancelled) {
+              setError(
+                'Some older logs could not be transferred yet. Your browser copy has been preserved.'
+              );
+            }
+          }
+        }
+        if (cancelled) return;
+      }
+    } catch (err) {
+      if (!cancelled) {
+        setLoadedUserId(authenticatedUserId);
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Could not load your health logs.'
+        );
+      }
+    } finally {
+      if (!cancelled) {
+        setLoading(false);
+      }
+    }
+  }
+
+  void loadLogs();
+
+  return () => {
+    cancelled = true;
+  };
+}, [userId]);
+
 
   useEffect(() => {
     if (selected && logs[selected]) setForm(logs[selected]);
@@ -62,15 +148,58 @@ export default function PeriodTracker() {
     setSaved(false);
   }, [selected]);
 
-  function save() {
-    if (!selected) return;
-    setLogs({ ...logs, [selected]: form });
+ 
+async function save() {
+  if (!userId || loadedUserId !== userId || !selected || saving || loading) return;
+  const savingUserId = userId;
+
+  setSaving(true);
+  setError('');
+  setSaved(false);
+
+  try {
+    await saveDailyLog(savingUserId, selected, form);
+    if (activeUserId.current !== savingUserId) return;
+
+    setLogs((previous) => ({
+      ...previous,
+      [selected]: { ...form },
+    }));
+
     setSaved(true);
+  } catch (err) {
+    if (activeUserId.current === savingUserId) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Could not save your health log. Please try again.'
+      );
+    }
+  } finally {
+    setSaving(false);
   }
+}
+
 
   const days = getDays(year, month);
   const firstDay = getFirstDay(year, month);
   const nextIn = predictNext(logs);
+
+  if (!userId) {
+    return (
+      <p role="status" className="mx-auto max-w-5xl px-4 py-8 text-ink/70">
+        Sign in to view your health logs.
+      </p>
+    );
+  }
+
+  if (loading || loadedUserId !== userId) {
+    return (
+      <p role="status" className="mx-auto max-w-5xl px-4 py-8 text-ink/70">
+        Loading your health logs…
+      </p>
+    );
+  }
 
   const prev = () => { if (month === 0) { setYear(year - 1); setMonth(11); } else setMonth(month - 1); };
   const next = () => { if (month === 11) { setYear(year + 1); setMonth(0); } else setMonth(month + 1); };
@@ -90,7 +219,23 @@ export default function PeriodTracker() {
         <CalendarHeart className="text-primary" size={28} />
         <h1 className="text-2xl font-semibold">Period Tracker</h1>
       </div>
-      <p className="text-ink/70 mb-6">Tap a date to log how you feel. Data stays only on this device.</p>
+      <p className="text-ink/70 mb-6">
+  Tap a date to log your symptoms and track your cycle.
+  Your logs are linked to your signed-in account.
+</p>
+
+{loading && (
+  <p role="status" className="mb-4 text-sm text-ink/60">
+    Loading your health logs…
+  </p>
+)}
+
+{error && (
+  <p role="alert" className="mb-4 text-sm text-red-700">
+    {error}
+  </p>
+)}
+
 
       {/* Prediction banner */}
       <div className="grid gap-4 sm:grid-cols-3 mb-6">
@@ -216,9 +361,16 @@ export default function PeriodTracker() {
                   placeholder="How are you feeling?" className="input py-2 resize-none" maxLength={200} />
               </div>
 
-              <button onClick={save} className="btn-primary w-full">
-                <Save size={16} />{saved ? '✓ Saved!' : 'Save log'}
-              </button>
+             
+<button
+  onClick={() => void save()}
+  disabled={loading || saving}
+  className="btn-primary w-full disabled:opacity-60"
+>
+  <Save size={16} />
+  {saving ? 'Saving…' : saved ? '✓ Saved!' : 'Save log'}
+</button>
+
             </>
           )}
         </div>
