@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { Heart, MessageCircle, Send, Users, ShieldCheck, PlusCircle, Pencil, Trash2, Check, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useT } from '../../i18n/t';
