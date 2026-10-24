@@ -19,7 +19,7 @@ const VIDEOS: Video[] = [
         topic: 'PCOS',
         description: 'Comprehensive overview of Polycystic Ovary Syndrome — what it is, symptoms to watch for, and how it\'s managed.',
         thumb: 'https://img.youtube.com/vi/5Bx5GW4KDZo/hqdefault.jpg',
-        url: 'https://www.youtube.com/watch?v=5Bx5GW4KDZo',
+        url: 'https://youtu.be/gPJDz4kXY7E?si=VFFwjpg4PzrLBEcP',
     },
     {
         id: 'v2',
@@ -28,7 +28,7 @@ const VIDEOS: Video[] = [
         topic: 'Menstrual Health',
         description: 'Learn what causes dysmenorrhea (period cramps), home remedies, and when to see a doctor.',
         thumb: 'https://img.youtube.com/vi/p_8THPy_fPM/hqdefault.jpg',
-        url: 'https://www.youtube.com/watch?v=p_8THPy_fPM',
+        url: 'https://www.youtube.com/watch?v=P9ddmRiKM_g',
     },
     {
         id: 'v3',
@@ -37,7 +37,7 @@ const VIDEOS: Video[] = [
         topic: 'Menstrual Hygiene',
         description: 'Safe hygiene practices during menstruation, types of products, and common myths debunked.',
         thumb: 'https://img.youtube.com/vi/GQQKnMsAZ1I/hqdefault.jpg',
-        url: 'https://www.youtube.com/watch?v=GQQKnMsAZ1I',
+        url: 'https://www.youtube.com/watch?v=q3_XHews0Js&utm_source=chatgpt.com',
     },
     {
         id: 'v4',
@@ -46,7 +46,7 @@ const VIDEOS: Video[] = [
         topic: 'Nutrition',
         description: 'Why women are more prone to iron deficiency, signs to recognize it, and dietary + supplement options.',
         thumb: 'https://img.youtube.com/vi/MsYqXH1FXIE/hqdefault.jpg',
-        url: 'https://www.youtube.com/watch?v=MsYqXH1FXIE',
+        url: 'https://www.youtube.com/results?search_query=NHS+iron+deficiency+anaemia',
     },
     {
         id: 'v5',
@@ -55,7 +55,7 @@ const VIDEOS: Video[] = [
         topic: 'Menstrual Health',
         description: 'A clear, visual explanation of the 4 phases of your cycle and what happens to your body each week.',
         thumb: 'https://img.youtube.com/vi/Vz6a_gBEy8g/hqdefault.jpg',
-        url: 'https://www.youtube.com/watch?v=Vz6a_gBEy8g',
+        url: 'https://www.eshre.eu/Home/IRHEC/IRHEC_Resources/Menstrual-cycle-and-periods?',
     },
     {
         id: 'v6',
@@ -64,7 +64,7 @@ const VIDEOS: Video[] = [
         topic: 'PCOS',
         description: 'Evidence-based diet and exercise tips that can help manage PCOS symptoms naturally.',
         thumb: 'https://img.youtube.com/vi/vkbH_fj5lEA/hqdefault.jpg',
-        url: 'https://www.youtube.com/watch?v=vkbH_fj5lEA',
+        url: 'https://www.pcosindia.org/patient-awareness-videos.php?',
     },
     {
         id: 'v7',
@@ -73,7 +73,7 @@ const VIDEOS: Video[] = [
         topic: 'Mental Health',
         description: 'How hormonal fluctuations through the cycle affect mood, anxiety, and emotional wellbeing.',
         thumb: 'https://img.youtube.com/vi/c6GtT_2GQTQ/hqdefault.jpg',
-        url: 'https://www.youtube.com/watch?v=c6GtT_2GQTQ',
+        url: "https://www.youtube.com/results?search_query=NHS+women's+hormones+mental+health",
     },
     {
         id: 'v8',
@@ -82,7 +82,7 @@ const VIDEOS: Video[] = [
         topic: 'Reproductive Health',
         description: 'What endometriosis is and why it\'s often misdiagnosed — important warning signs explained.',
         thumb: 'https://img.youtube.com/vi/AP4TGCaVZCs/hqdefault.jpg',
-        url: 'https://www.youtube.com/watch?v=AP4TGCaVZCs',
+        url: 'https://www.youtube.com/watch?v=ABi1ncHorBY',
     },
     {
         id: 'v9',
@@ -91,7 +91,7 @@ const VIDEOS: Video[] = [
         topic: 'Thyroid',
         description: 'Why thyroid disorders are more common in women, how they affect periods and fertility, and treatment options.',
         thumb: 'https://img.youtube.com/vi/RrRMtF4XSHE/hqdefault.jpg',
-        url: 'https://www.youtube.com/watch?v=RrRMtF4XSHE',
+        url: 'https://www.youtube.com/results?search_query=NHS+thyroid+problems+women',
     },
     {
         id: 'v10',
@@ -100,7 +100,7 @@ const VIDEOS: Video[] = [
         topic: 'Vaginal Health',
         description: 'Common myths about vaginal health busted, normal vs abnormal discharge, and hygiene tips.',
         thumb: 'https://img.youtube.com/vi/PDHNIaFrHyQ/hqdefault.jpg',
-        url: 'https://www.youtube.com/watch?v=PDHNIaFrHyQ',
+        url: 'https://askawayhealth.org/youtube-hub/',
     },
 ];
 
