@@ -6,7 +6,7 @@ export type Lang = 'en' | 'hi';
 type Key = keyof typeof en;
 const dict: Record<Lang, Record<string, string>> = { en, hi };
 const Ctx = createContext<{ lang: Lang; setLang: (l: Lang) => void; t: (k: Key) => string }>({
-  lang: 'en', setLang: () => {}, t: (k) => k,
+  lang: 'en', setLang: () => { }, t: (k) => k,
 });
 
 export function I18nProvider({ children }: { children: ReactNode }) {
@@ -17,3 +17,4 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   return <Ctx.Provider value={{ lang, setLang, t }}>{children}</Ctx.Provider>;
 }
 export const useT = () => useContext(Ctx);
+
