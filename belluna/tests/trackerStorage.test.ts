@@ -28,8 +28,8 @@ function createStorage() {
 describe('account-scoped tracker storage', () => {
   it('keeps two signed-in users’ local logs separate when switching accounts', () => {
     const storage = createStorage();
-    const userA = { '2026-10-01': { flow: 1, pain: 2, mood: 3, notes: 'A' } };
-    const userB = { '2026-10-02': { flow: 2, pain: 1, mood: 2, notes: 'B' } };
+    const userA = { '2026-10-01': { flow: 1, pain: 6, mood: 3, notes: 'A' } };
+    const userB = { '2026-10-02': { flow: 2, pain: 3, mood: 2, notes: 'B' } };
 
     saveTrackerLogs('synthetic-user-a', userA, storage);
     expect(loadTrackerLogs('synthetic-user-b', storage)).toEqual({});
@@ -60,5 +60,15 @@ describe('account-scoped tracker storage', () => {
 
     expect(loadTrackerLogs('synthetic-user-a', storage)).toEqual({});
     expect(storage.get('belluna.tracker')).toBe(legacyValue);
+  });
+
+  it('converts legacy pain categories into the numeric scale without deleting the stored copy', () => {
+    const storage = createStorage();
+    const legacyValue = '{"2026-10-01":{"flow":3,"pain":2,"mood":4,"notes":"legacy"}}';
+    storage.setItem('belluna.tracker.user:synthetic-user-a', legacyValue);
+
+    expect(loadTrackerLogs('synthetic-user-a', storage)['2026-10-01'].pain).toBe(6);
+    expect(storage.get('belluna.tracker.user:synthetic-user-a')).toBe(legacyValue);
+    expect(storage.get('belluna.tracker.user.v2:synthetic-user-a')).toContain('"pain":6');
   });
 });

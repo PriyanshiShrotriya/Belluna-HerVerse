@@ -1,5 +1,7 @@
 
 import { supabase } from '../../lib/supabase';
+import type { DailyLogRepo } from '../../lib/db/tracker';
+import { isoDateSchema } from './trackerData';
 import {
   fromDatabase,
   toDatabaseFields,
@@ -34,6 +36,7 @@ export async function getDailyLogs(
   let query = supabase
     .from('daily_logs')
     .select('log_date, flow, pain, mood, notes')
+    .eq('user_id', userId)
     .order('log_date', { ascending: true });
 
   if (startDate) query = query.gte('log_date', startDate);
@@ -79,8 +82,8 @@ export async function saveDailyLog(
 export async function deleteDailyLog(userId: string, date: string): Promise<void> {
     await requireUserId(userId);
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    throw new Error('Date must use YYYY-MM-DD format.');
+  if (!isoDateSchema.safeParse(date).success) {
+    throw new Error('Invalid calendar date.');
   }
 
   const { error } = await supabase
@@ -92,3 +95,9 @@ export async function deleteDailyLog(userId: string, date: string): Promise<void
   if (error) throw error;
   await requireUserId(userId);
 }
+
+export const dailyLogRepo: DailyLogRepo = {
+  list: (userId, range) => getDailyLogs(userId, range?.from, range?.to),
+  save: saveDailyLog,
+  remove: deleteDailyLog,
+};

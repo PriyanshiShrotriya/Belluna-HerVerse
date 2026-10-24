@@ -108,7 +108,7 @@ Never put the service-role key or any LLM key in a `VITE_` variable.
 npx supabase login
 npx supabase link --project-ref <ref>
 npx supabase db push            # applies supabase/migrations/*
-npx supabase gen types typescript --linked > src/types/database.ts
+npx supabase gen types typescript --linked > belluna/src/lib/database.types.ts
 ```
 
 Before enabling AI requests, configure the per-user daily quota in the Supabase SQL Editor as the project/database owner. Replace `<approved_positive_integer>` with the limit approved by the team; do not expose this configuration to client roles:
@@ -119,20 +119,56 @@ on conflict (id) do update set daily_limit = excluded.daily_limit;
 ```
 The migration deliberately seeds no limit. The `consume_ai_quota()` RPC fails closed until a valid positive limit is configured. `service_role` has no table privileges for this setting; configure it as the database owner/admin using the SQL Editor, not through a service-role API call.
 
-Before enabling AI requests, the server-side `/api/explain` implementation must call `consume_ai_quota()` as the authenticated user and stop before calling the AI provider if it returns `false`. Treat an RPC error or missing quota configuration as a failure and do not call the provider. No AI backend implementation is present in this repository yet, so quota enforcement at the provider boundary remains a required implementation task.
+Before enabling AI requests, the server-side AI implementation must call `consume_ai_quota()` as the authenticated user and stop before calling the AI provider if it returns `false`. Treat an RPC error or missing quota configuration as a failure and do not call the provider. The current Express server exposes `/api/health-ai`, while the Translator calls `/api/explain`; no provider invocation is implemented, so this integration remains incomplete and must be coordinated with Member 1.
 
 The migration adds `chat_messages` to Supabase's `supabase_realtime` publication only if it is not already a member. If that publication is absent, the migration stops with an instruction to enable Realtime for `chat_messages` in Supabase before rerunning the fresh-install migration.
 
 Enable **Anonymous sign-ins** in Supabase Auth settings if the chat uses them.
 
+### Tracker migration and symptom catalogue
+
+`supabase/migrations/0002_unique_cycle_start_dates.sql` adds a unique index for
+each user's period start date. It does not delete or rewrite records, but it
+intentionally stops if duplicate starts already exist. Review and resolve any
+duplicates before applying it; do not rerun `0001_init.sql`.
+
+For a project where `0001_init.sql` was applied manually in SQL Editor, apply
+only the pending `0002` migration after confirming the migration history will
+not cause `0001` to run again. For a fresh project, use the project's migration
+runner to apply migrations in order. Do not mix SQL Editor execution and CLI
+migration history without reconciling the recorded state. After the schema
+exists, `supabase/seed.sql` can insert the static bilingual symptom catalogue;
+it contains no personal health data and uses `ON CONFLICT DO NOTHING`.
+
+The tracker UI and repositories live under `belluna/src/features/tracker/`.
+Local tests do not verify hosted Supabase RLS. Before demoing, test owner-only
+reads and writes with two synthetic accounts against the intended project.
+
+### Hosted tracker/RLS verification
+
+This is a manual integration check, separate from the mocked Vitest suite:
+
+1. Use an approved non-production Supabase project and two synthetic test
+   accounts. Create distinct cycle, daily-log and symptom records as each user.
+2. Through authenticated Supabase client requests (not only the UI), verify
+   each user can select, insert, update and delete only their own records.
+   While signed in as user A, attempt to read and modify user B's known record
+   IDs and attempt an insert with user B's `user_id`; no cross-account record
+   may be returned or changed.
+3. Repeat requests while signed out and confirm private operations are denied.
+   Record the observed results without copying access tokens or health data
+   into logs or tickets. Clean up only the synthetic accounts and records.
+
 ### Run locally
 ```bash
-npm run dev          # frontend only (Vite)
-npm run dev:cf       # frontend + Pages Functions (AI proxy) — check versel's current wrangler flags
-npm run typecheck
-npm run lint
-npm test             # includes the AI safety test cases
+cd belluna
+npm run dev           # Vite frontend
+npm run server        # Express API
+npm test              # Vitest unit tests
+npm run build         # TypeScript check and production Vite build
 ```
+There are currently no separate `typecheck`, `lint`, or `dev:cf` scripts in
+`belluna/package.json`.
 
 ### Deploy (versel Pages)
 1. Connect the GitHub repo to versel Pages.
@@ -145,25 +181,21 @@ npm test             # includes the AI safety test cases
 ```
 .
 ├── README.md
-├── docs/                  requirements · architecture · phases · rules
-├── content/
-│   ├── kb/                trusted knowledge snippets (with source metadata)
-│   ├── medicines/         medicine library entries (no dosing)
-│   └── symptoms.json      symptom catalogue (EN/HI)
-├── functions/             versel Pages Functions (AI proxy)
-│   ├── api/explain.ts
-│   └── _lib/              llm · safety · kb · auth
+├── requirements.md
+├── architecture.md
+├── phases.md
+├── rules.md
 ├── supabase/
-│   ├── migrations/
-│   └── seed.sql           synthetic demo data only
-├── src/
-│   ├── app/               routes, layout, providers
-│   ├── components/ui/     shadcn/ui components
-│   ├── features/          translator · tracker · sos · doctors · chat · medicines · auth
-│   ├── lib/               supabase client, db repositories, utils
-│   ├── i18n/              en.json · hi.json
-│   └── types/
-└── tests/safety/          unsafe-response and accuracy test cases
+│   ├── migrations/        database schema changes
+│   └── seed.sql           bilingual symptom catalogue
+└── belluna/
+    ├── server/            Express API
+    ├── src/
+    │   ├── app/            routes, layout, providers
+    │   ├── features/       translator · tracker · SOS · doctors · community · auth
+    │   ├── lib/            Supabase client and utilities
+    │   └── i18n/           en.json · hi.json
+    └── tests/              Vitest tests
 ```
 
 ## 8. Team and ownership

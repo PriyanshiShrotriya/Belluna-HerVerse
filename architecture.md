@@ -389,7 +389,9 @@ $$;
 - The migration checks whether Supabase's `supabase_realtime` publication exists and whether `public.chat_messages` is already a member before adding it. It fails with an explicit instruction if the publication is absent; enable Realtime for this table in Supabase before running the migration. Postgres-changes subscriptions respect RLS; test with two accounts. Delete events are not filtered by RLS, so deletions are handled as hide-by-update.
 - Anonymous sign-ins (Supabase) can feed the chat, but anonymous users cannot track data across devices; decide in Phase 1.
 - Schedule cleanup of old chat messages (for example `pg_cron`, or a manual script before the demo).
-- `symptom_catalog` is seeded from `content/symptoms.json`. `supabase/seed.sql` contains **synthetic** demo data only.
+- `supabase/seed.sql` currently inserts a bilingual static symptom catalogue. `content/symptoms.json` is not present in the repository; no personal symptom or cycle records are seeded.
+- `supabase/migrations/0002_unique_cycle_start_dates.sql` adds a per-user unique cycle start date index to prevent duplicate period starts. It aborts if duplicates already exist and does not delete data; inspect and resolve such rows before applying it.
+- The tracker UI currently supports cycle start/end dates and notes, and symptom date/severity. The existing `symptom_entries` table has no time or notes columns, so those fields are not captured.
 - Account deletion needs a server-side step (admin API); start with an RPC that deletes the user's tracker rows and profile data.
 
 ### RLS summary
@@ -408,7 +410,12 @@ $$;
 
 ## 5. Shared TypeScript interfaces (Member 2 publishes; others consume)
 
-Implemented in `src/lib/db/`. Types come from generated `database.ts`.
+Tracker contracts currently live in `belluna/src/lib/db/tracker.ts`. Until
+types are generated from the connected Supabase project, these are domain
+types. Each client repository receives the expected user ID from the current
+auth context and verifies it against `supabase.auth.getUser()` before and after
+operations; the verified session ID, not arbitrary client input, is used in
+database filters and payloads.
 
 ```ts
 export type DateRange = { from: string; to: string }; // ISO dates
@@ -420,21 +427,22 @@ export interface ProfileRepo {
 }
 
 export interface CycleRepo {
-  list(range?: DateRange): Promise<CycleEntry[]>;
-  create(input: NewCycleEntry): Promise<CycleEntry>;
-  update(id: string, patch: Partial<NewCycleEntry>): Promise<CycleEntry>;
-  remove(id: string): Promise<void>;
+  list(userId: string, range?: DateRange): Promise<CycleEntry[]>;
+  save(userId: string, input: NewCycleEntry): Promise<CycleEntry>;
+  remove(userId: string, id: string): Promise<void>;
 }
 
 export interface DailyLogRepo {
-  upsert(input: NewDailyLog): Promise<DailyLog>;
-  list(range: DateRange): Promise<DailyLog[]>;
+  list(userId: string, range?: DateRange): Promise<Record<string, HealthLog>>;
+  save(userId: string, date: string, log: HealthLog): Promise<void>;
+  remove(userId: string, date: string): Promise<void>;
 }
 
 export interface SymptomRepo {
-  catalog(): Promise<SymptomDef[]>;
-  setForDay(date: string, items: { code: string; severity: 1|2|3|4|5 }[]): Promise<void>;
-  list(range: DateRange): Promise<SymptomEntry[]>;
+  catalog(userId: string): Promise<SymptomDefinition[]>;
+  list(userId: string, range?: DateRange): Promise<SymptomEntry[]>;
+  upsert(userId: string, input: Omit<SymptomEntry, 'id'>): Promise<void>;
+  remove(userId: string, id: string): Promise<void>;
 }
 
 export interface TimelineRepo {
@@ -455,7 +463,7 @@ export interface ChatRepo {
 }
 ```
 
-Zod schemas for `NewCycleEntry`, `NewDailyLog` and symptom input live next to the repositories and are reused by React Hook Form.
+Zod schemas for cycle, daily-log and symptom inputs live in the tracker data/validation modules and are used by repository validation. The current tracker forms use controlled React state; integrating the schemas with React Hook Form remains optional follow-up work.
 
 **Translator ↔ tracker contract (P2):** `TimelineRepo.getCycleStats()` can feed an opt-in context object to the translator; the proxy never receives raw entries.
 
@@ -609,7 +617,7 @@ Per-user daily quota via `consume_ai_quota()`; its configured limit is stored in
 | Symptom frequency | `symptom_entries` grouped by code | Recharts bar |
 | Timeline | Merged events | List component |
 
-**Cycle stats** (TK-7): average and variability of recent cycle lengths; label the result as an estimate. Irregularity thresholds must come from a cited clinical source before use.
+**Cycle stats** (TK-7): display the recorded average and range; estimate the next date from the median of up to the three most recent observed cycle lengths, clearly labelled as an estimate. The median limits the effect of one unusually long or short interval without discarding or changing any records. Irregularity thresholds must come from a cited clinical source before use.
 
 **Pattern insights** (TK-8): hand-written rules in `src/features/tracker/insights.ts`. Each insight returns `{ id, message, triggeredBy: entryIds[], sourceId }`. Wording is non-diagnostic: "worth discussing with a doctor".
 

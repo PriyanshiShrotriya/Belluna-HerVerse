@@ -3,18 +3,24 @@ import { Home, MessageCircleQuestion, CalendarHeart, MapPin, Users, Settings, Si
 import Logo from './Logo';
 import { useT } from '../i18n/t';
 import { useAuth } from '../app/stubs/auth';
+import { useProfileLanguage } from '../features/auth/ProfileLanguageProvider';
 
 export function LangSwitch() {
-  const { lang, setLang, t } = useT();
+  const { lang, t } = useT();
+  const { loading, error, changeLanguage } = useProfileLanguage();
   return (
-    <div role="group" aria-label={t('common.language')} className="inline-flex rounded-xl bg-soft p-1">
-      {(['en', 'hi'] as const).map((l) => (
-        <button key={l} aria-pressed={lang === l} onClick={() => setLang(l)}
-          className={`min-h-[40px] min-w-[44px] rounded-lg px-3 text-sm font-medium ${lang === l ? 'bg-white text-primary shadow-sm' : 'text-ink/70'}`}>
-          {l === 'en' ? 'EN' : 'हिं'}
-        </button>
-      ))}
-    </div>
+    <>
+      <div role="group" aria-label={t('common.language')} className="inline-flex rounded-xl bg-soft p-1">
+        {(['en', 'hi'] as const).map((l) => (
+          <button key={l} aria-pressed={lang === l} disabled={loading}
+            onClick={() => void changeLanguage(l).catch(() => undefined)}
+            className={`min-h-[40px] min-w-[44px] rounded-lg px-3 text-sm font-medium disabled:opacity-60 ${lang === l ? 'bg-white text-primary shadow-sm' : 'text-ink/70'}`}>
+            {l === 'en' ? 'EN' : 'हिं'}
+          </button>
+        ))}
+      </div>
+      {error && <span role="alert" className="max-w-36 text-xs text-red-700">{error}</span>}
+    </>
   );
 }
 

@@ -1,84 +1,97 @@
-# Member 2 — Backend + Health Tracking Execution Checklist
+# Member 2 — Backend + Health Tracking Closure Checklist
 
-This checklist is based on the repository as inspected on 2026-10-24. Nothing in
-this checklist is marked complete: each box is unchecked until its definition of
-done has evidence.
+Updated 2026-10-25. This checklist distinguishes local implementation evidence
+from hosted Supabase verification. No hosted database operations were performed
+for this audit.
 
-## Current repository state
+## Priority assessment
 
-- Present: `README.md`, `requirements.md`, `architecture.md`, `phases.md`,
-  `rules.md`, `supabase/migrations/0001_init.sql`, and the tagged
-  `supabase/migrations/.0001_init_backup.txt`.
-- No application scaffold, package manifest, TypeScript source, backend
-  implementation, repository modules, or tests are currently present.
-- `0001_init.sql` already exists. Do not recreate it or apply/rerun it as part
-  of this checklist. Follow `rules.md`: after it has been applied, schema
-  changes belong in a new migration.
-- The README and architecture describe a Vite/React app and a server-side Pages
-  Function for AI requests, but do not install packages or assume files or
-  configuration have arrived until teammates push the base project.
-- “Files” below list the exact expected paths. Paths marked **expected** are
-  specified by the project documents but are not present in the inspected
-  repository yet.
+| Priority | Requirement | Current status |
+|---|---|---|
+| P0 | AU-1 email authentication | Implemented in source; hosted authentication is integration-unverified. |
+| P0 | AU-2 automatic pseudonymous profile | Defined by the migration trigger; hosted trigger execution is unverified. |
+| P0 | AU-3 owner-only profile read/update | Client repository verifies the current session and filters by its user ID; RLS is SQL-defined only and needs hosted verification. |
+| P0 | AU-4 saved, app-wide EN/HI preference | Implemented through the authenticated profile repository and language provider; locally unit-tested, hosted read/write is integration-unverified. |
+| P0 | TK-1 through TK-6, TK-11 | Implemented locally with unit coverage; live Supabase persistence is integration-unverified. |
+| P0 | TK-10 RLS | Owner policies and grants are defined in SQL, but enforcement is not verified against the hosted database. |
+| P1 | TK-7 estimate | Implemented locally; estimate remains non-diagnostic and uses the median of up to three recent intervals. |
+| P1 | TK-8 rule-based pattern insights | Deferred; not required to finish the P0 MVP flow. |
+| P1 | AU-6 data deletion | Incomplete; requires a carefully authorized deletion workflow and integration testing. |
+| P2 | AU-5 adult confirmation and CH-1 through CH-8 chat data | Chat schema, moderation/rate-limit functions and SQL access controls are defined in `0001_init.sql`; hosted security/Realtime behavior is unverified, and there is no complete client chat workflow. Do not enable chat until adult confirmation and moderation are integration-tested. |
+| P2 | TK-9 PDF export | Deferred; requirements identify this as a nice-to-have and it is cut before P0/P1. |
 
-## 1. Tasks I can complete before the base files arrive
+## Implemented and locally verified
 
-| Done | Priority | Task | Exact files involved | Steps | Dependencies | Definition of done |
-|---|---|---|---|---|---|---|
-| [ ] | P0 | Review the existing schema against requirements | `supabase/migrations/0001_init.sql`, `architecture.md` §4, `requirements.md` §§3.3–3.4, `rules.md` §7 | Check cycle, daily-log, symptom, profile and AI quota tables; column constraints; RLS; grants; trigger/function dependencies. Record discrepancies for review instead of editing an applied migration. | Existing documents and migration; no Supabase connection needed. | A reviewed discrepancy list maps each finding to the relevant requirement or architecture clause; no undocumented requirement is added. |
-| [ ] | P0 | Agree shared database contracts with Members 1 and 3 | `architecture.md` §5; **expected:** `src/lib/db/` repository interfaces and shared types | Share the documented `ProfileRepo`, `CycleRepo`, `DailyLogRepo`, `SymptomRepo`, and `TimelineRepo` contracts; agree domain types, date ranges, error behavior, and ownership before parallel implementation. | Teammate availability; base project files are not required for discussion. | Members 1 and 3 acknowledge the same contract and no competing repository shape is being implemented. |
-| [ ] | P0 | Prepare privacy and tracker acceptance scenarios | `requirements.md` §§3.3–3.4 and 7.3; `architecture.md` §§4–5; `rules.md` §§7–8 | Specify synthetic-account scenarios for owner-only reads/writes, date-range history, one daily log per date, symptom severity bounds, and account isolation. | Requirements and schema review. | Scenario list has positive and negative cases for each P0 tracker/auth requirement and contains no real health data. |
-| [ ] | P0 | Confirm integration boundaries and task ownership | `phases.md` Member 2 sections and dependency map; `architecture.md` §§3, 5; `README.md` §§7–8 | Confirm with teammates that M2 owns schema, auth/profile data access, repositories, tracker persistence, timeline/chart data and typed contracts; coordinate UI ownership with M3 and AI proxy ownership with M1. | Team coordination only. | Each shared boundary has a named owner and an agreed handoff; no module is duplicated. |
-| [ ] | P1 | Prepare a synthetic symptom-catalogue review | **Expected:** `content/symptoms.json`, `supabase/seed.sql`; `architecture.md` §4; `rules.md` §§5, 8 | Once the source catalogue is available, check bilingual labels and stable codes; ensure seed entries are synthetic/static catalogue data, not personal records. | M1’s content file or team-approved catalogue; base files are not currently present. | Catalogue keys match the agreed database shape, EN/HI labels are reviewed, and seed data contains no real user information. |
+| Requirement | Status | Evidence |
+|---|---|---|
+| TK-1 Period create/edit/delete and validation | Implemented locally | `belluna/src/features/tracker/HealthHistory.tsx`, `trackerRepositories.ts`, `trackerData.ts`; date order, calendar date, duplicate start-date and notes constraints are validated. Mocked tests cover validation and missing-update confirmation. |
+| TK-2 Daily logs: flow, pain, mood and notes | Implemented locally | `dailyLogUtils.ts`, `dailyLogsService.ts`, `PeriodTracker.tsx`; flow 0–4, pain 0–10, six schema-supported moods including `irritable`, and notes are mapped/validated. Tests cover mapping, ranges and authenticated owner filtering. |
+| TK-3 Bilingual symptoms and severity | Implemented locally | `HealthHistory.tsx`, `trackerRepositories.ts`, `trackerData.ts`, `supabase/seed.sql`; UI supports catalogue selection and severity 1–5. Seed rows are static bilingual catalogue data; team linguistic/content review remains advisable. |
+| TK-4 Newest-first history | Implemented locally | Cycle and symptom repositories request descending dates; visible history lists use descending order. |
+| TK-5 Combined health timeline | Implemented locally | `trackerData.ts` combines cycles, daily logs and symptoms in ascending order; `HealthHistory.tsx` reverses it for newest-first presentation. |
+| TK-6 Charts and empty states | Implemented locally | `HealthHistory.tsx` renders cycle lengths, daily flow/pain and symptom frequency from fetched records; empty/sparse histories show localized messages. Recharts history is lazy-loaded. |
+| TK-7 Next-period estimate | Implemented locally | `trackerData.ts` estimates from the median of up to three recent cycle intervals. It is labeled and disclaimed in English/Hindi; outlier regression coverage is in `trackerData.test.ts`. No records are filtered or changed. |
+| TK-11 Typed repositories | Implemented locally | `belluna/src/lib/db/tracker.ts` exports cycle, daily-log and symptom contracts; repositories verify current authenticated user and scope queries/writes to that ID. |
+| AU-3/AU-4 Profile read and saved language | Implemented locally; service tests pass | `belluna/src/features/auth/profileRepository.ts` selects/updates only the session-verified profile and only writes `preferred_language`; `ProfileLanguageProvider.tsx` loads the preference on account changes and applies it app-wide. Tests cover ownership mismatch, scoped updates and missing-row confirmation. Hosted behavior remains unverified. |
+| Unknown daily-log mood values | Fixed and locally tested | `dailyLogUtils.ts` rejects unknown stored moods instead of silently mapping them to “okay”; a regression test covers the behavior. |
+| Local tracker storage isolation | Implemented and unit-tested | `trackerStorage.ts` scopes browser storage by user ID, preserves legacy copies, and does not adopt the unscoped legacy key. Tests cover two users and signed-out behavior. |
+| Local automated checks | Verified | From `belluna/`: `npm test`, `npm run build`, and repository-level `git diff --check`; final results are recorded below after rerun. |
 
-## 2. Tasks blocked until the base files arrive
+## Defined in SQL, not verified against hosted Supabase
 
-| Done | Priority | Task | Exact files involved | Steps | Dependencies | Definition of done |
-|---|---|---|---|---|---|---|
-| [ ] | P0 | Establish typed Supabase client and generated database types | **Expected:** `src/lib/supabase.ts`, `src/types/database.ts`; `supabase/migrations/0001_init.sql` | Follow the scaffold’s existing conventions; use the approved Supabase client setup; generate types from the agreed schema after CLI/project workflow is available. Do not create environment or connection files before the team’s base setup arrives. | Base project, approved dependency/configuration, and later Supabase connection for linked type generation. | Strict TypeScript accepts the client and generated types; no credentials or service-role key enter browser code. |
-| [ ] | P0 | Implement authenticated profile access | **Expected:** `src/features/auth/`, `src/lib/db/profileRepo.ts`; auth provider/client files supplied by the scaffold | Implement the documented sign-up, sign-in, sign-out and current-profile flows; read/update only the current profile; support language preference and explicit adult confirmation. Preserve database permissions and avoid exposing handles or other users’ profiles. | Base auth/provider conventions; database migration applied to the target project for live verification. | Auth state and profile operations work through the app; unauthorized/other-user profile access is denied; the auth-created profile behavior is verified. |
-| [ ] | P0 | Publish and implement typed tracker repositories | **Expected:** `src/lib/db/` interfaces and `profileRepo.ts`, `cycleRepo.ts`, `dailyLogRepo.ts`, `symptomRepo.ts`; `src/types/database.ts` | Implement documented method signatures. Scope all reads/writes to the signed-in user, validate inputs with shared Zod schemas, and surface failures rather than returning success-shaped fallbacks. | Base project and agreed contracts; generated DB types. | Interfaces match `architecture.md` §5; repositories type-check and return correctly typed records/errors. |
-| [ ] | P0 | Implement cycle tracking persistence and forms | **Expected:** `src/features/tracker/`, `src/lib/db/cycleRepo.ts`; shared form/schema locations established by scaffold | Support create/edit/delete with start date, optional end date and bounded notes; validate end date is not before start date; wire forms using React Hook Form + Zod and M3’s components. | Base project, repository contract, and M3 form/component boundary. | A signed-in synthetic user can create, edit, list and delete cycle entries; invalid dates are rejected and data remains private. |
-| [ ] | P0 | Implement daily health logs and symptom tracking | **Expected:** `src/features/tracker/`, `src/lib/db/dailyLogRepo.ts`, `src/lib/db/symptomRepo.ts`; **expected:** `content/symptoms.json`, `supabase/seed.sql` | Implement daily flow (0–4), pain (0–10), mood and notes; upsert one daily log per date; list/select symptoms from the bilingual catalogue with severity 1–5; validate form inputs. | Base project, catalogue/seed contract, repository interfaces, and M3 UI components. | User can save/update and retrieve daily logs and symptom entries; constraints and validation match requirements; catalogue labels display in EN/HI. |
-| [ ] | P0 | Implement history, combined timeline and charts | **Expected:** `src/features/tracker/`; `src/lib/db/timelineRepo.ts`; chart components in tracker feature | Provide newest-first history and a merged, date-sorted timeline; calculate cycle statistics from available entries; render cycle length, pain/flow and symptom-frequency charts with empty/loading/error states. | Cycle/log/symptom repositories and M3’s shared UI/components; Recharts dependency only if included/approved in base setup. | Timeline and charts reflect persisted synthetic data, handle sparse/empty history, and do not expose another user’s records. |
-| [ ] | P0 | Publish shared interfaces for M1/M3 | **Expected:** `src/lib/db/` repository interfaces and exported types | Implement the contracts in `architecture.md` §5, including `ProfileRepo`, `CycleRepo`, `DailyLogRepo`, `SymptomRepo`, and `TimelineRepo`; communicate stable imports and any reviewed changes. | Base project and team agreement on contracts. | M1/M3 can import the interfaces without depending on implementation details; strict type-check succeeds. |
-| [ ] | P0 | Enforce the AI quota at the backend/provider boundary | **Expected:** `functions/api/explain.ts`, `functions/_lib/auth.ts` or the base project’s equivalent; `README.md` §6; `architecture.md` §§4, 6.2, 6.6 | Inspect the actual backend before changing it. Verify the user JWT and call `consume_ai_quota()` as that authenticated user; stop before provider invocation on `false`, RPC error, or missing configuration. Never use a client-controlled limit or service-role bypass. | M1’s backend implementation and agreed endpoint contract; migration applied and quota configured before live quota checks. | Tests prove false result, RPC error and missing configuration each prevent provider invocation; a valid allowed result can proceed. |
-| [ ] | P2 | Implement chat data integration only if chat remains in scope | **Expected:** `src/lib/db/chatRepo.ts`; M3 chat feature; `supabase/migrations/0001_init.sql` | Implement rooms, history, send, subscription, report, block/unblock and blocked-handle operations against the documented schema; retain adult confirmation, no-links, rate-limit and moderator behavior. | Team cut-line decision; M3’s chat UI; base project and database verification. | CH-1–CH-8 data behaviors pass; if chat is cut, document that no chat implementation will ship. |
+| Requirement | SQL evidence | What remains unverified |
+|---|---|---|
+| TK-10 Owner-only tracker access | `supabase/migrations/0001_init.sql` defines RLS owner policies, table grants and constraints for `cycle_entries`, `daily_logs`, and `symptom_entries`. | Migration application state, effective grants/policies, and actual owner isolation have not been checked against the hosted project. |
+| Duplicate cycle start protection | `supabase/migrations/0002_unique_cycle_start_dates.sql` checks for duplicates, then adds a per-user unique index without deleting rows. | Migration is unapplied here. Check duplicates and confirm migration history before applying it. |
+| Symptom catalogue availability | `supabase/seed.sql` inserts bilingual rows using `ON CONFLICT DO NOTHING`. | Seed has not been run; availability and team-approved translations are not verified live. |
+| Profile creation and moderator assignment | `0001_init.sql` defines profile creation trigger and moderator table without client write grants. | Trigger/policy behavior and trusted moderator provisioning have not been tested in the hosted project. |
 
-## 3. Tasks blocked until Supabase is connected
+## Still requiring manual or authorized integration verification
 
-“Connected” means the team has approved the hosted project and access path. Do not request, paste, or commit credentials in this checklist or in chat. These tasks must not be attempted against a different project.
+- [ ] Apply pending migrations only after confirming target project and migration
+  history. Do not rerun `0001_init.sql`; inspect existing duplicate cycle starts
+  before considering migration `0002`.
+- [ ] Apply/review the symptom catalogue seed and verify authenticated catalogue
+  reads.
+- [ ] Use two synthetic accounts and direct authenticated requests to test
+  select/insert/update/delete on cycles, daily logs and symptoms; confirm
+  cross-user and signed-out access is denied. Mocked unit tests do not verify
+  RLS.
+- [ ] In a browser, test sign-out/account switch during pending requests,
+  refresh persistence, failed network/save states, cycle CRUD, daily log
+  persistence, symptom logging, timeline ordering and chart rendering.
+- [ ] Verify authentication/profile requirements against the intended project.
+  Test automatic profile creation, profile read/update RLS, and saved-language
+  persistence across sign-in and account switching.
+- [ ] Review accessibility and mobile presentation manually, including
+  keyboard operation and a 360px viewport.
 
-| Done | Priority | Task | Exact files involved | Steps | Dependencies | Definition of done |
-|---|---|---|---|---|---|---|
-| [ ] | P0 | Apply the existing migration once to the intended empty schema | `supabase/migrations/0001_init.sql`; Supabase SQL Editor or the team-approved migration runner | Confirm target project, migration state and empty-schema assumptions; review the complete SQL; apply the existing migration exactly once using the agreed deployment process. Do not recreate, rerun or edit it after application. For later schema changes, add a new migration. | Supabase connected; project-owner approval; migration reviewed; required Supabase objects/publication confirmed. | Migration completes in the intended project and resulting schema/policies/functions are inspected. Record actual execution evidence; do not infer success from a submitted query. |
-| [ ] | P0 | Verify row-level security with two synthetic users | `supabase/migrations/0001_init.sql`; **expected:** `tests/` or documented manual test procedure | With two test accounts, attempt direct API reads and writes across profiles, cycles, daily logs and symptoms; verify own access succeeds and cross-user access is denied. Include unauthenticated requests. | Migration applied; two synthetic accounts; safe test environment. | Evidence shows user A cannot read or alter user B’s private records through direct requests, not just through UI hiding. |
-| [ ] | P0 | Verify hosted auth/profile trigger and profile permissions | `supabase/migrations/0001_init.sql`; **expected:** `src/features/auth/`, `src/lib/db/profileRepo.ts` | Create/sign in test accounts; confirm automatic pseudonymous profile creation, own-profile read/update behavior, and that clients cannot change handles or other users’ profile rows. | Migration applied; auth implementation present; synthetic accounts. | Test results confirm trigger and grants/policies behave as intended, including denied unauthorized profile changes. |
-| [ ] | P0 | Initialize the protected AI quota configuration | `supabase/migrations/0001_init.sql`; `README.md` §6; Supabase SQL Editor | As database owner/admin, choose a team-approved positive daily limit and configure the single `ai_quota_config` row. Do not invent a value or use a client/service-role API call to configure it. | Migration applied; team-approved limit; database-owner/admin access. | Configuration is present and positive; anon/authenticated/service-role cannot read or change it; quota RPC fails closed when config is deliberately absent in a safe test environment. |
-| [ ] | P0 | Verify quota RPC behavior and backend integration | `supabase/migrations/0001_init.sql`; **expected:** `functions/api/explain.ts`; **expected:** backend tests | Test authenticated quota consumption, the configured daily boundary, concurrent requests, missing configuration and RPC failures; verify backend never calls the provider on false/error. | Quota configured; backend implementation present; safe test project and approved limit. | Requests beyond the configured limit are denied; concurrency does not allow excess provider calls; false/error paths do not invoke the provider. |
-| [ ] | P0 | Load the approved symptom catalogue and synthetic demo data | **Expected:** `supabase/seed.sql`, `content/symptoms.json`; migration table definitions | Seed only reviewed catalogue and synthetic demo entries. Confirm seed behavior is safe for the intended environment and does not insert real health data. | Migration applied; approved catalogue; seed file reviewed; synthetic demo account agreed. | Catalogue is available to signed-in users and synthetic demo records appear only for the intended demo account. |
-| [ ] | P1 | Implement and verify account data deletion | **Expected:** new reviewed migration if schema changes; **expected:** server-side deletion function/endpoint and `src/features/auth/` | Follow the architecture’s server-side deletion requirement; verify deletion cascades remove the user’s tracker/profile records without granting clients admin access. | Base backend/auth files; migration applied; deletion design reviewed; synthetic account. | Synthetic account deletion removes all in-scope personal records and prevents future access; no service-role credential is exposed to the browser. |
-| [ ] | P2 | Verify chat policies and Realtime only if chat ships | `supabase/migrations/0001_init.sql`; **expected:** `src/lib/db/chatRepo.ts`; M3 chat UI | Verify publication membership, adult gates, no-links constraint, rate limit, report auto-hide, block filtering, and moderator review using separate synthetic roles/accounts. | Chat remains in scope; migration applied; test accounts and moderator setup. | Direct API and Realtime tests confirm expected ordinary-user and moderator access without exposing private health records. |
+## Incomplete or deferred requirements
 
-## 4. Final integration and testing tasks
+- AU-6 account/data deletion is P1 and is not implemented.
+- TK-8 rule-based pattern insights are P1 and deferred until the P0 flow is
+  integrated; TK-9 PDF export is P2 and deferred.
+- AU-5 and CH-1 through CH-8 remain P2: database protections are defined in
+  SQL, but a complete adult-confirmation and chat client workflow is not
+  implemented or live-verified.
+- Hosted TK-10 RLS verification remains pending.
+- Live Supabase persistence and production deployment are not verified.
+- The symptom schema supports date and severity only; it has no symptom time or
+  notes fields.
+- The P0 implementation is locally code-complete but not end-to-end closed:
+  authorized integration must verify profile creation/language persistence,
+  health-data persistence and two-user RLS.
 
-| Done | Priority | Task | Exact files involved | Steps | Dependencies | Definition of done |
-|---|---|---|---|---|---|---|
-| [ ] | P0 | Run tracker golden path end to end | **Expected:** `src/features/tracker/`, `src/lib/db/`, `src/types/database.ts`; relevant tests | Sign in with synthetic account; add/edit/delete a cycle; add/update a daily log; set symptoms; inspect history, timeline and charts; reload and verify persistence. | Base files, repositories, UI, migration applied, synthetic account and catalogue. | All P0 tracker actions work after reload and reflect the same persisted data without console/runtime errors. |
-| [ ] | P0 | Run auth and cross-user privacy scenarios | **Expected:** auth/profile modules, repositories and test files; `supabase/migrations/0001_init.sql` | Exercise sign-up/sign-in/sign-out, profile language update, unauthenticated access, and two-user direct API access. | Auth implementation, hosted RLS verification and synthetic accounts. | Acceptance scenarios pass; only the owner accesses private profile/health data; failures are visible and handled. |
-| [ ] | P0 | Run strict typecheck, lint, tests and production build | `package.json` and scripts supplied by base project; `src/lib/db/`; `src/features/tracker/`; tests | Use only scripts actually present in the arrived project. Fix M2-owned failures and report unrelated baseline failures without masking them. | Base project and M2 implementation. | Available project checks pass and outputs are recorded; no missing script is represented as a pass. |
-| [ ] | P0 | Verify language, accessibility and failure states in tracker/auth | `src/features/auth/`, `src/features/tracker/`, `src/i18n/en.json`, `src/i18n/hi.json` | Check EN/HI strings, keyboard and labels, mobile layout at 360 px, loading/empty/error states, and denied/network/offline responses. | Integrated UI and translations; shared components from M3. | P0 paths are usable at 360 px, localized in both languages, and errors do not silently appear as successful saves. |
-| [ ] | P0 | Complete integration handoff and review | M2-owned source files; `architecture.md`; `requirements.md`; `phases.md` | Open a focused PR; map changes to requirement IDs; include test/RLS evidence; coordinate generated type updates and any schema change through a new migration. | Implementation and validation complete; teammate reviewer available. | PR is reviewed, requirement coverage is clear, and no secret, real health data, or unreviewed schema change is included. |
-| [ ] | P1 | Verify deletion, insights and estimate cut line | **Expected:** tracker repositories/features and tests; any new migration if required | Implement only after P0 flows pass; keep estimates clearly labeled and insights non-diagnostic with triggering entries shown; verify deletion before release. | P0 tracker complete; team prioritization; approved designs. | Each shipped P1 feature meets its requirement and has tests; cut features are explicitly left out rather than half-wired. |
-| [ ] | P2 | Final chat go/no-go | `phases.md`; **expected:** chat repository/UI and test files | Confirm team capacity; if shipped, run chat policy, moderation, block, report and Realtime scenarios. Otherwise defer chat per the documented cut line. | P0 tracker/auth complete; chat implementation and hosted tests if selected. | Team records a clear ship/defer decision; any shipped chat passes the documented moderation/privacy tests. |
+## Verification record
 
-## Three useful things to do now
+- `cd belluna; npm test` — passed: 7 test files, 33 tests.
+- `cd belluna; npm run build` — passed: TypeScript check and Vite production
+  build. Vite emitted a non-blocking warning that the main JavaScript chunk is
+  larger than 500 kB.
+- `git diff --check` — passed.
+- `belluna/src/i18n/hi.json` parses as valid UTF-8 JSON and
+  `supabase/seed.sql` is valid UTF-8; both contain Hindi Unicode characters and
+  no Unicode replacement characters.
 
-1. Review the existing migration against `architecture.md` and `requirements.md`,
-   recording only concrete discrepancies; do not edit or apply it.
-2. Share the `architecture.md` §5 repository contracts with Members 1 and 3 and
-   agree the import/API boundaries before anyone builds against assumptions.
-3. Prepare synthetic two-user acceptance scenarios for cycle entries, daily
-   logs, symptom entries, profile privacy and the AI quota false/error paths.
-   This requires no connection, credentials, package installation or changes to
-   teammates’ files.
+These checks do not verify hosted Supabase, live persistence, RLS, deployment,
+or browser-level account switching.

@@ -18,7 +18,7 @@ describe('Daily health log mapping', () => {
   it('maps UI values to database values', () => {
     expect(toDatabaseFields(sampleLog)).toEqual({
       flow: 2,
-      pain: 6,
+      pain: 2,
       mood: 'good',
       notes: 'Mild discomfort',
     });
@@ -29,11 +29,37 @@ describe('Daily health log mapping', () => {
       fromDatabase({
         log_date: '2026-10-24',
         flow: 2,
-        pain: 6,
+        pain: 2,
         mood: 'good',
         notes: 'Mild discomfort',
       })
     ).toEqual(sampleLog);
+  });
+
+  it('preserves the irritable mood supported by the database schema', () => {
+    const irritableLog = {
+      ...sampleLog,
+      mood: 5,
+    };
+    expect(fromDatabase({
+      log_date: '2026-10-24',
+      flow: 2,
+      pain: 2,
+      mood: 'irritable',
+      notes: 'Mild discomfort',
+    })).toEqual(irritableLog);
+    expect(toDatabaseFields(irritableLog).mood).toBe('irritable');
+    expect(() => validateDailyLog('2026-10-24', irritableLog)).not.toThrow();
+  });
+
+  it('rejects an unknown database mood instead of silently changing it', () => {
+    expect(() => fromDatabase({
+      log_date: '2026-10-24',
+      flow: 2,
+      pain: 2,
+      mood: 'unexpected',
+      notes: null,
+    })).toThrow('Unsupported mood value in daily log: unexpected');
   });
 
   it('converts blank notes to null for storage', () => {
@@ -50,8 +76,14 @@ describe('Daily health log mapping', () => {
 
   it('rejects a flow value outside the UI range', () => {
     expect(() =>
-      validateDailyLog('2026-10-24', { ...sampleLog, flow: 4 })
+      validateDailyLog('2026-10-24', { ...sampleLog, flow: 5 })
     ).toThrow('Invalid flow, pain, or mood selection.');
+  });
+
+  it('accepts the required maximum flow and pain values', () => {
+    expect(() =>
+      validateDailyLog('2026-10-24', { ...sampleLog, flow: 4, pain: 10 })
+    ).not.toThrow();
   });
 
   it('rejects notes longer than 200 characters', () => {
