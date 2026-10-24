@@ -47,7 +47,8 @@ function WarningItem({ text }: { text: string }) {
   );
 }
 
-function PadFinderPanel({ t }: { t: (k: string) => string }) {
+function PadFinderPanel() {
+  const { t } = useT();
   const mapEl = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const layer = useRef<L.LayerGroup | null>(null);
@@ -207,7 +208,7 @@ export default function Sos() {
               <span className="text-4xl">🛒</span>
               <h2 className="mt-2 text-2xl font-bold text-slate-800">{t('sos.pad.title')}</h2>
             </div>
-            <PadFinderPanel t={t} />
+            <PadFinderPanel />
           </div>
         )}
 
