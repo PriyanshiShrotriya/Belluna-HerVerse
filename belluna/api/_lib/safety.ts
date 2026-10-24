@@ -136,7 +136,10 @@ export function screenQuestion(question: string): SafetyDecision {
     /\b(?:stock|stocks|share price|crypto|bitcoin|tax return|weather forecast)\b/,
     /\b(?:write|debug|compile) (?:a|the)? code\b/,
     /\b(?:football|cricket) score\b/,
-    /शेयर बाजार|मौसम का पूर्वानुमान|कोड लिखो/,
+    /\b(?:capital of|president of|prime minister of|population of)\b/,
+    /\b(?:history of|recipe for|lyrics to|movie review|book summary)\b/,
+    /\b(?:flight|hotel|travel|restaurant) recommendations?\b/,
+    /शेयर बाजार|मौसम का पूर्वानुमान|कोड लिखो|फ्रांस की राजधानी|देश की राजधानी|जनसंख्या/,
   ])) {
     return { kind: 'out_of_scope', flag: 'outside_health_scope' };
   }

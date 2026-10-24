@@ -74,6 +74,58 @@ describe('translator safety short-circuit', () => {
     expect(response.code).toBe(200);
     expect(response.body).toMatchObject({ sources: [] });
   });
+
+  it('returns out_of_scope without calling Groq for unrelated general knowledge', async () => {
+    const groq = vi.spyOn(globalThis, 'fetch');
+    const response = responseRecorder();
+
+    await handler({
+      method: 'POST',
+      body: { question: 'What is the capital of France?', language: 'en' },
+    }, response);
+
+    expect(groq).not.toHaveBeenCalled();
+    expect(response.code).toBe(200);
+    expect(response.body).toMatchObject({
+      status: 'out_of_scope',
+      safety: { flags: ['outside_health_scope'] },
+      sources: [],
+    });
+  });
+
+  it('keeps legitimate general women’s-health questions on the model path', async () => {
+    const groq = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        ...JSON.parse(validEnglishGroqResponse().choices[0].message.content),
+        title: 'Women’s health basics',
+        summary: 'Women’s health includes many body and reproductive health topics.',
+      }) } }],
+    }), { status: 200 }));
+    const response = responseRecorder();
+
+    await handler({
+      method: 'POST',
+      body: { question: 'What should I know about women’s health?', language: 'en' },
+    }, response);
+
+    expect(groq).toHaveBeenCalledTimes(1);
+    expect(response.code).toBe(200);
+    expect(response.body).toMatchObject({ status: 'ok', language: 'en' });
+  });
+
+  it('keeps emergency handling ahead of out-of-scope screening', async () => {
+    const groq = vi.spyOn(globalThis, 'fetch');
+    const response = responseRecorder();
+
+    await handler({
+      method: 'POST',
+      body: { question: 'I am soaking a pad every hour and feel faint, what is the capital of France?', language: 'en' },
+    }, response);
+
+    expect(groq).not.toHaveBeenCalled();
+    expect(response.code).toBe(200);
+    expect(response.body).toMatchObject({ status: 'emergency', sources: [] });
+  });
 });
 
 describe('translator response language', () => {
@@ -266,6 +318,80 @@ describe('translator response language', () => {
     expect(response.body).toMatchObject({ status: 'ok', language: 'en' });
     const body = response.body as { title: string; summary: string; key_points: string[] };
     expect(`${body.title} ${body.summary} ${body.key_points.join(' ')}`).not.toMatch(/[\u0900-\u097F]/u);
+  });
+
+  it('maps valid source IDs to canonical trusted source records', async () => {
+    const groq = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        ...JSON.parse(validEnglishGroqResponse().choices[0].message.content),
+        source_ids: ['who-menstrual-health'],
+      }) } }],
+    }), { status: 200 }));
+    const response = responseRecorder();
+
+    await handler({
+      method: 'POST',
+      body: { question: 'Why do I get cramps before my period?', language: 'en' },
+    }, response);
+
+    expect(groq).toHaveBeenCalledTimes(1);
+    expect(response.code).toBe(200);
+    expect(response.body).toMatchObject({
+      sources: [{
+        id: 'who-menstrual-health',
+        title: 'Menstrual health',
+        publisher: 'World Health Organization',
+        url: 'https://www.who.int/news-room/fact-sheets/detail/menstrual-health',
+      }],
+    });
+  });
+
+  it('discards unknown source IDs and model-supplied source records', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        ...JSON.parse(validEnglishGroqResponse().choices[0].message.content),
+        source_ids: ['not-approved', 'who-endometriosis'],
+        sources: [{
+          id: 'malicious',
+          title: 'Untrusted',
+          publisher: 'Unknown',
+          url: 'https://attacker.example/medical',
+        }],
+      }) } }],
+    }), { status: 200 }));
+    const response = responseRecorder();
+
+    await handler({
+      method: 'POST',
+      body: { question: 'Why do I get cramps before my period?', language: 'en' },
+    }, response);
+
+    expect(response.code).toBe(200);
+    expect(response.body).toMatchObject({
+      sources: [{
+        id: 'who-endometriosis',
+        title: 'Endometriosis',
+        publisher: 'World Health Organization',
+        url: 'https://www.who.int/news-room/fact-sheets/detail/endometriosis',
+      }],
+    });
+    expect(JSON.stringify(response.body)).not.toContain('attacker.example');
+    expect(JSON.stringify(response.body)).not.toContain('Untrusted');
+  });
+
+  it('returns empty sources when the model selects no source IDs', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: validEnglishGroqResponse().choices[0].message.content } }],
+    }), { status: 200 }));
+    const response = responseRecorder();
+
+    await handler({
+      method: 'POST',
+      body: { question: 'Why do I get cramps before my period?', language: 'en' },
+    }, response);
+
+    expect(response.code).toBe(200);
+    expect(response.body).toMatchObject({ status: 'ok', sources: [] });
   });
 
   it('rejects model content that does not match the requested language', async () => {
