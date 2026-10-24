@@ -1,56 +1,96 @@
-
 import { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Droplets, Zap, Smile, Save, CalendarHeart } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Droplets,
+  Zap,
+  Smile,
+  Save,
+  CalendarHeart,
+  BarChart2,
+} from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { getDailyLogs, saveDailyLog } from './dailyLogsService';
 import { useAuth } from '../../app/stubs/auth';
 import { loadTrackerLogs, saveTrackerLogs } from './trackerStorage';
-
+import { useT } from '../../i18n/t';
 
 type Log = { flow: number; pain: number; mood: number; notes: string };
-type Logs = Record<string, Log>; // key: "YYYY-MM-DD"
+type Logs = Record<string, Log>;
 
 const MOODS = ['😢', '😕', '😐', '🙂', '😄'];
-const FLOWS = ['None', 'Light', 'Medium', 'Heavy'];
-const PAINS = ['None', 'Mild', 'Moderate', 'Severe'];
 
 function toKey(y: number, m: number, d: number) {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
-
-function getDays(year: number, month: number) {
-  return new Date(year, month + 1, 0).getDate();
-}
-
-function getFirstDay(year: number, month: number) {
-  return new Date(year, month, 1).getDay();
-}
+function getDays(year: number, month: number) { return new Date(year, month + 1, 0).getDate(); }
+function getFirstDay(year: number, month: number) { return new Date(year, month, 1).getDay(); }
 
 function predictNext(logs: Logs): number | null {
-  const periodDays = Object.entries(logs)
-    .filter(([, v]) => v.flow > 0)
-    .map(([k]) => new Date(k).getTime())
-    .sort((a, b) => a - b);
+  const periodDays = Object.entries(logs).filter(([, v]) => v.flow > 0).map(([k]) => new Date(k).getTime()).sort((a, b) => a - b);
   if (periodDays.length < 2) return null;
   const gaps: number[] = [];
-  for (let i = 1; i < periodDays.length; i++) {
-    const gap = (periodDays[i] - periodDays[i - 1]) / (1000 * 60 * 60 * 24);
-    if (gap > 2 && gap < 50) gaps.push(gap);
-  }
+  for (let i = 1; i < periodDays.length; i++) { const g = (periodDays[i] - periodDays[i - 1]) / 86400000; if (g > 2 && g < 50) gaps.push(g); }
   if (!gaps.length) return null;
   const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length;
-  const last = periodDays[periodDays.length - 1];
-  const next = new Date(last + avg * 24 * 60 * 60 * 1000);
-  const diff = Math.round((next.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-  return diff;
+  return Math.round((new Date(periodDays[periodDays.length - 1] + avg * 86400000).getTime() - Date.now()) / 86400000);
 }
 
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const MONTH_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const MONTH_HI = ['जनवरी', 'फ़रवरी', 'मार्च', 'अप्रैल', 'मई', 'जून', 'जुलाई', 'अगस्त', 'सितंबर', 'अक्तूबर', 'नवंबर', 'दिसंबर'];
+const DAY_EN = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+const DAY_HI = ['र', 'सो', 'मं', 'बु', 'गु', 'शु', 'श'];
+
+// ─── Mini Bar Chart Component ──────────────────────────────────────────────
+function BarChart({ data, label, color, maxVal = 3 }: { data: { date: string; val: number }[]; label: string; color: string; maxVal?: number }) {
+  if (!data.length) return null;
+  const last30 = data.slice(-30);
+  return (
+    <div>
+      <p className="text-xs font-semibold text-ink/60 mb-2 uppercase tracking-wide">{label}</p>
+      <div className="flex items-end gap-px h-14 overflow-hidden">
+        {last30.map((d, i) => {
+          const pct = maxVal > 0 ? (d.val / maxVal) * 100 : 0;
+          return (
+            <div key={i} className="group relative flex-1 flex items-end" title={`${d.date}: ${d.val}`}>
+              <div className="w-full rounded-t transition-all" style={{ height: `${Math.max(pct, d.val > 0 ? 8 : 0)}%`, background: d.val > 0 ? color : '#f1f0f7' }} />
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-xs text-ink/40 mt-1">Last 30 logged days</p>
+    </div>
+  );
+}
+
+// ─── Mood Line Chart ───────────────────────────────────────────────────────
+function MoodChart({ data, label }: { data: { date: string; val: number }[]; label: string }) {
+  const last = data.slice(-20);
+  if (!last.length) return null;
+  const w = 100 / last.length;
+  const points = last.map((d, i) => `${(i * w + w / 2).toFixed(1)},${((4 - d.val) / 4) * 80 + 10}`).join(' ');
+  return (
+    <div>
+      <p className="text-xs font-semibold text-ink/60 mb-2 uppercase tracking-wide">{label}</p>
+      <svg viewBox="0 0 100 100" className="h-14 w-full" preserveAspectRatio="none">
+        <polyline fill="none" stroke="#A78BFA" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" points={points} />
+        {last.map((d, i) => (
+          <circle key={i} cx={(i * w + w / 2).toFixed(1)} cy={((4 - d.val) / 4) * 80 + 10} r="3" fill="#6D3AAE" />
+        ))}
+      </svg>
+      <div className="flex justify-between text-xs text-ink/40 mt-1">
+        <span>😢</span><span>😐</span><span>😄</span>
+      </div>
+    </div>
+  );
+}
 
 export default function PeriodTracker() {
   const { session } = useAuth();
   const userId = session?.userId ?? null;
   const activeUserId = useRef(userId);
   activeUserId.current = userId;
+  const { t, lang } = useT();
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
@@ -62,86 +102,90 @@ export default function PeriodTracker() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [showCharts, setShowCharts] = useState(false);
 
+  useEffect(() => {
+    if (!loading && userId && loadedUserId === userId) {
+      saveTrackerLogs(userId, logs, window.localStorage);
+    }
+  }, [logs, loading, userId, loadedUserId]);
 
-useEffect(() => {
-  if (!loading && userId && loadedUserId === userId) {
-    saveTrackerLogs(userId, logs, window.localStorage);
-  }
-}, [logs, loading, userId, loadedUserId]);
+  useEffect(() => {
+    let cancelled = false;
 
+    setSelected(null);
+    setForm({ flow: 0, pain: 0, mood: 2, notes: '' });
+    setSaved(false);
+    setError('');
 
-useEffect(() => {
-  let cancelled = false;
+    if (!userId) {
+      setLogs({});
+      setLoadedUserId(null);
+      setLoading(false);
 
-  setSelected(null);
-  setForm({ flow: 0, pain: 0, mood: 2, notes: '' });
-  setSaved(false);
-  setError('');
+      return () => {
+        cancelled = true;
+      };
+    }
 
-  if (!userId) {
-    setLogs({});
-    setLoadedUserId(null);
-    setLoading(false);
+    const authenticatedUserId = userId;
+
+    async function loadLogs() {
+      setLoading(true);
+
+      try {
+        const localLogs = loadTrackerLogs(
+          authenticatedUserId,
+          window.localStorage
+        );
+
+        setLogs(localLogs);
+        setLoadedUserId(authenticatedUserId);
+
+        const cloudLogs = await getDailyLogs(authenticatedUserId);
+
+        if (cancelled) return;
+
+        const mergedLogs: Logs = { ...localLogs, ...cloudLogs };
+        setLogs(mergedLogs);
+
+        for (const [date, log] of Object.entries(localLogs)) {
+          if (!Object.prototype.hasOwnProperty.call(cloudLogs, date)) {
+            try {
+              await saveDailyLog(authenticatedUserId, date, log);
+            } catch {
+              if (!cancelled) {
+                setError(
+                  'Some older logs could not be transferred yet. Your browser copy has been preserved.'
+                );
+              }
+            }
+          }
+
+          if (cancelled) return;
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setLoadedUserId(authenticatedUserId);
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Could not load your health logs.'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadLogs();
+
     return () => {
       cancelled = true;
     };
-  }
-
-  const authenticatedUserId = userId;
-
-  async function loadLogs() {
-    setLoading(true);
-
-    try {
-      const localLogs = loadTrackerLogs(authenticatedUserId, window.localStorage);
-      setLogs(localLogs);
-      setLoadedUserId(authenticatedUserId);
-      const cloudLogs = await getDailyLogs(authenticatedUserId);
-
-      if (cancelled) return;
-
-      const mergedLogs: Logs = { ...localLogs, ...cloudLogs };
-      setLogs(mergedLogs);
-
-      for (const [date, log] of Object.entries(localLogs)) {
-        if (!Object.prototype.hasOwnProperty.call(cloudLogs, date)) {
-          try {
-            await saveDailyLog(authenticatedUserId, date, log);
-          } catch {
-            if (!cancelled) {
-              setError(
-                'Some older logs could not be transferred yet. Your browser copy has been preserved.'
-              );
-            }
-          }
-        }
-        if (cancelled) return;
-      }
-    } catch (err) {
-      if (!cancelled) {
-        setLoadedUserId(authenticatedUserId);
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Could not load your health logs.'
-        );
-      }
-    } finally {
-      if (!cancelled) {
-        setLoading(false);
-      }
-    }
-  }
-
-  void loadLogs();
-
-  return () => {
-    cancelled = true;
-  };
-}, [userId]);
-
-
+  }, [userId]);
   useEffect(() => {
     if (selected && logs[selected]) setForm(logs[selected]);
     else setForm({ flow: 0, pain: 0, mood: 2, notes: '' });
@@ -181,6 +225,11 @@ async function save() {
 }
 
 
+  const FLOWS = [t('tracker.flow.none'), t('tracker.flow.light'), t('tracker.flow.medium'), t('tracker.flow.heavy')];
+  const PAINS = [t('tracker.pain.none'), t('tracker.pain.mild'), t('tracker.pain.moderate'), t('tracker.pain.severe')];
+  const MONTHS = lang === 'hi' ? MONTH_HI : MONTH_EN;
+  const DAYS = lang === 'hi' ? DAY_HI : DAY_EN;
+
   const days = getDays(year, month);
   const firstDay = getFirstDay(year, month);
   const nextIn = predictNext(logs);
@@ -213,56 +262,91 @@ async function save() {
     return 'bg-lavender';
   }
 
+  // Chart data — all logged days sorted ascending
+  const allEntries = Object.entries(logs).sort(([a], [b]) => a.localeCompare(b));
+  const flowData = allEntries.filter(([, v]) => v.flow > 0 || v.pain > 0).map(([k, v]) => ({ date: k, val: v.flow }));
+  const painData = allEntries.filter(([, v]) => v.flow > 0 || v.pain > 0).map(([k, v]) => ({ date: k, val: v.pain }));
+  const moodData = allEntries.filter(([, v]) => v.flow > 0 || v.pain > 0).map(([k, v]) => ({ date: k, val: v.mood }));
+  const hasData = allEntries.length > 0;
+
+  const avgCycle = (() => {
+    const pd = allEntries.filter(([, v]) => v.flow > 0).map(([k]) => new Date(k).getTime()).sort((a, b) => a - b);
+    if (pd.length < 2) return '—';
+    const gs = []; for (let i = 1; i < pd.length; i++) { const g = (pd[i] - pd[i - 1]) / 86400000; if (g > 2 && g < 50) gs.push(g); }
+    if (!gs.length) return '—';
+    return `${Math.round(gs.reduce((a, b) => a + b) / gs.length)} ${lang === 'hi' ? 'दिन' : 'days'}`;
+  })();
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
-      <div className="flex flex-wrap items-center gap-3 mb-2">
-        <CalendarHeart className="text-primary" size={28} />
-        <h1 className="text-2xl font-semibold">Period Tracker</h1>
+      <div className="flex flex-wrap items-center gap-3 mb-2 justify-between">
+        <div className="flex items-center gap-3">
+          <CalendarHeart className="text-primary" size={28} />
+          <h1 className="text-2xl font-semibold">Period Tracker</h1>
+        </div>
+        <button onClick={() => setShowCharts(!showCharts)}
+          className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-all border ${showCharts ? 'bg-primary text-white border-primary' : 'bg-white border-soft text-primary hover:bg-soft'}`}>
+          <BarChart2 size={16} />
+          {t('tracker.charts')}
+        </button>
       </div>
-      <p className="text-ink/70 mb-6">
-  Tap a date to log your symptoms and track your cycle.
-  Your logs are linked to your signed-in account.
-</p>
+      <p className="text-ink/70 mb-6 text-sm">
+        {lang === 'hi'
+          ? 'तारीख टैप करके अपने लक्षण दर्ज करें। आपकी प्रविष्टियाँ आपके खाते से जुड़ी हैं।'
+          : 'Tap a date to log your symptoms and track your cycle. Your logs are linked to your signed-in account.'}
+      </p>
 
-{loading && (
-  <p role="status" className="mb-4 text-sm text-ink/60">
-    Loading your health logs…
-  </p>
-)}
+      {loading && (
+        <p role="status" className="mb-4 text-sm text-ink/60">
+          {lang === 'hi'
+            ? 'आपकी स्वास्थ्य प्रविष्टियाँ लोड हो रही हैं…'
+            : 'Loading your health logs…'}
+        </p>
+      )}
 
-{error && (
-  <p role="alert" className="mb-4 text-sm text-red-700">
-    {error}
-  </p>
-)}
+      {error && (
+        <p role="alert" className="mb-4 text-sm text-red-700">
+          {error}
+        </p>
+      )}
 
-
-      {/* Prediction banner */}
+      {/* Stats strip */}
       <div className="grid gap-4 sm:grid-cols-3 mb-6">
         <div className="card bg-gradient-to-br from-purple-50 to-lavender/20">
-          <p className="text-xs text-ink/60 mb-1">Next period estimate</p>
+          <p className="text-xs text-ink/60 mb-1">{t('dash.next')}</p>
           <p className="text-2xl font-bold text-primary">
-            {nextIn === null ? '—' : nextIn <= 0 ? 'Today / Due' : `in ${nextIn} days`}
+            {nextIn === null ? '—' : nextIn <= 0 ? (lang === 'hi' ? 'आज / अपेक्षित' : 'Today / Due') : (lang === 'hi' ? `${nextIn} दिन में` : `in ${nextIn} days`)}
           </p>
         </div>
         <div className="card">
-          <p className="text-xs text-ink/60 mb-1">Days logged</p>
+          <p className="text-xs text-ink/60 mb-1">{lang === 'hi' ? 'दर्ज किए दिन' : 'Days logged'}</p>
           <p className="text-2xl font-bold text-primary">{Object.keys(logs).filter(k => logs[k].flow > 0).length}</p>
         </div>
         <div className="card">
-          <p className="text-xs text-ink/60 mb-1">Average cycle</p>
-          <p className="text-2xl font-bold text-primary">
-            {(() => {
-              const periodDays = Object.entries(logs).filter(([, v]) => v.flow > 0).map(([k]) => new Date(k).getTime()).sort((a, b) => a - b);
-              if (periodDays.length < 2) return '—';
-              const gaps = [];
-              for (let i = 1; i < periodDays.length; i++) { const g = (periodDays[i] - periodDays[i - 1]) / 86400000; if (g > 2 && g < 50) gaps.push(g); }
-              if (!gaps.length) return '—';
-              return `${Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length)} days`;
-            })()}
-          </p>
+          <p className="text-xs text-ink/60 mb-1">{lang === 'hi' ? 'औसत चक्र' : 'Average cycle'}</p>
+          <p className="text-2xl font-bold text-primary">{avgCycle}</p>
         </div>
       </div>
+
+      {/* Charts panel */}
+      {showCharts && (
+        <div className="card mb-6">
+          <h2 className="font-semibold text-base mb-1">{t('tracker.charts')}</h2>
+          <p className="text-xs text-ink/60 mb-5">{t('tracker.charts.sub')}</p>
+          {!hasData ? (
+            <div className="text-center py-8 text-ink/50">
+              <BarChart2 size={36} className="mx-auto mb-3 text-lavender" />
+              <p className="text-sm">{t('tracker.nodata')}</p>
+            </div>
+          ) : (
+            <div className="grid gap-6 sm:grid-cols-3">
+              <BarChart data={flowData} label={t('tracker.chart.flow')} color="#B42318" maxVal={3} />
+              <BarChart data={painData} label={t('tracker.chart.pain')} color="#F97316" maxVal={3} />
+              <MoodChart data={moodData} label={t('tracker.chart.mood')} />
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Calendar */}
@@ -273,7 +357,7 @@ async function save() {
             <button onClick={next} className="btn-ghost p-2 min-h-0 h-9 w-9"><ChevronRight size={18} /></button>
           </div>
           <div className="grid grid-cols-7 gap-1 text-center text-xs text-ink/50 mb-2">
-            {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(d => <div key={d}>{d}</div>)}
+            {DAYS.map(d => <div key={d}>{d}</div>)}
           </div>
           <div className="grid grid-cols-7 gap-1">
             {Array.from({ length: firstDay }).map((_, i) => <div key={`e${i}`} />)}
@@ -295,10 +379,10 @@ async function save() {
           </div>
           {/* Legend */}
           <div className="mt-4 flex flex-wrap gap-3 text-xs text-ink/60">
-            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#B42318]" />Heavy flow</span>
-            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-pink-400" />Light flow</span>
-            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-orange-400" />Pain logged</span>
-            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-lavender" />Other</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#B42318]" />{lang === 'hi' ? 'भारी फ़्लो' : 'Heavy flow'}</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-pink-400" />{lang === 'hi' ? 'हल्का फ़्लो' : 'Light flow'}</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-orange-400" />{lang === 'hi' ? 'दर्द' : 'Pain logged'}</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-lavender" />{lang === 'hi' ? 'अन्य' : 'Other'}</span>
           </div>
         </div>
 
@@ -307,17 +391,19 @@ async function save() {
           {!selected ? (
             <div className="flex flex-col items-center justify-center h-full text-center py-10 text-ink/50 gap-3">
               <CalendarHeart size={40} className="text-lavender" />
-              <p>Tap a date on the calendar to log symptoms</p>
+              <p className="text-sm">{t('tracker.symptoms')}</p>
+              <Link to="/sos" className="mt-2 text-xs text-primary underline">Period SOS →</Link>
             </div>
           ) : (
             <>
               <h2 className="font-semibold text-lg mb-4">
-                {selected === toKey(today.getFullYear(), today.getMonth(), today.getDate()) ? 'Today' : selected}
+                {selected === toKey(today.getFullYear(), today.getMonth(), today.getDate())
+                  ? (lang === 'hi' ? 'आज' : 'Today')
+                  : selected}
               </h2>
-
               {/* Flow */}
               <div className="mb-4">
-                <label className="flex items-center gap-2 text-sm font-medium mb-2"><Droplets size={16} className="text-primary" />Flow</label>
+                <label className="flex items-center gap-2 text-sm font-medium mb-2"><Droplets size={16} className="text-primary" />{lang === 'hi' ? 'फ़्लो' : 'Flow'}</label>
                 <div className="grid grid-cols-4 gap-2">
                   {FLOWS.map((f, i) => (
                     <button key={f} onClick={() => setForm({ ...form, flow: i })}
@@ -327,10 +413,9 @@ async function save() {
                   ))}
                 </div>
               </div>
-
               {/* Pain */}
               <div className="mb-4">
-                <label className="flex items-center gap-2 text-sm font-medium mb-2"><Zap size={16} className="text-primary" />Pain level</label>
+                <label className="flex items-center gap-2 text-sm font-medium mb-2"><Zap size={16} className="text-primary" />{lang === 'hi' ? 'दर्द का स्तर' : 'Pain level'}</label>
                 <div className="grid grid-cols-4 gap-2">
                   {PAINS.map((p, i) => (
                     <button key={p} onClick={() => setForm({ ...form, pain: i })}
@@ -340,10 +425,9 @@ async function save() {
                   ))}
                 </div>
               </div>
-
               {/* Mood */}
               <div className="mb-4">
-                <label className="flex items-center gap-2 text-sm font-medium mb-2"><Smile size={16} className="text-primary" />Mood</label>
+                <label className="flex items-center gap-2 text-sm font-medium mb-2"><Smile size={16} className="text-primary" />{lang === 'hi' ? 'मूड' : 'Mood'}</label>
                 <div className="flex gap-3">
                   {MOODS.map((m, i) => (
                     <button key={i} onClick={() => setForm({ ...form, mood: i })}
@@ -353,24 +437,25 @@ async function save() {
                   ))}
                 </div>
               </div>
-
               {/* Notes */}
               <div className="mb-4">
-                <label className="text-sm font-medium mb-1 block">Notes (optional)</label>
+                <label className="text-sm font-medium mb-1 block">{lang === 'hi' ? 'नोट्स (वैकल्पिक)' : 'Notes (optional)'}</label>
                 <textarea rows={2} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
-                  placeholder="How are you feeling?" className="input py-2 resize-none" maxLength={200} />
+                  placeholder={lang === 'hi' ? 'आप कैसा महसूस कर रही हैं?' : 'How are you feeling?'}
+                  className="input py-2 resize-none" maxLength={200} />
               </div>
-
-             
-<button
-  onClick={() => void save()}
-  disabled={loading || saving}
-  className="btn-primary w-full disabled:opacity-60"
->
-  <Save size={16} />
-  {saving ? 'Saving…' : saved ? '✓ Saved!' : 'Save log'}
-</button>
-
+              <button
+                onClick={() => void save()}
+                disabled={loading || saving}
+                className="btn-primary w-full disabled:opacity-60"
+              >
+                <Save size={16} />
+                {saving
+                  ? (lang === 'hi' ? 'सेव हो रहा है…' : 'Saving…')
+                  : saved
+                    ? (lang === 'hi' ? '✓ सेव हो गया!' : '✓ Saved!')
+                    : (lang === 'hi' ? 'सेव करें' : 'Save log')}
+              </button>
             </>
           )}
         </div>
