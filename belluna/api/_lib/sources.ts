@@ -1,4 +1,4 @@
-import type { TranslatorSource } from '../../src/features/translator/types';
+import type { TranslatorSource } from '../../src/features/translator/types.js';
 
 interface TrustedSource extends TranslatorSource {
   retrieved: string;

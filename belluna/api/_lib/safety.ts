@@ -1,5 +1,5 @@
-import type { ExplainResponse, Language } from '../../src/features/translator/types';
-import type { ResponseStyle } from './language';
+import type { ExplainResponse, Language } from '../../src/features/translator/types.js';
+import type { ResponseStyle } from './language.js';
 
 export type SafetyDecision =
   | { kind: 'emergency'; flag: string }
