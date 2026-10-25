@@ -3,13 +3,11 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useRef,
   useState,
   type ReactNode,
 } from 'react';
 import { useAuth } from '../../app/stubs/auth';
 import { useT, type Lang } from '../../i18n/t';
-import { profileRepo } from './profileRepository';
 
 type LanguagePreferenceContextValue = {
   loading: boolean;
@@ -20,38 +18,16 @@ type LanguagePreferenceContextValue = {
 const LanguagePreferenceContext = createContext<LanguagePreferenceContextValue | null>(null);
 
 export function ProfileLanguageProvider({ children }: { children: ReactNode }) {
-  const { session, loading: authLoading } = useAuth();
+  const { session, profile, updateLanguage: updateAccountLanguage } = useAuth();
   const { setLang, t } = useT();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const revision = useRef(0);
   const activeUserId = session?.userId ?? null;
 
   useEffect(() => {
-    if (authLoading) return;
-    if (!activeUserId) {
-      setLoading(false);
-      setError('');
-      return;
-    }
-
-    const requestRevision = revision.current;
-    let cancelled = false;
-    setLoading(true);
-    setError('');
-    void profileRepo.get(activeUserId).then((profile) => {
-      if (!cancelled && revision.current === requestRevision) {
-        setLang(profile.preferredLanguage);
-      }
-    }).catch(() => {
-      if (!cancelled && revision.current === requestRevision) {
-        setError(t('profile.languageLoadError'));
-      }
-    }).finally(() => {
-      if (!cancelled && revision.current === requestRevision) setLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [activeUserId, authLoading, setLang, t]);
+    if (!activeUserId) setError('');
+    if (profile?.id === activeUserId) setLang(profile.preferredLanguage);
+  }, [activeUserId, profile, setLang]);
 
   const changeLanguage = useCallback(async (language: Lang) => {
     setError('');
@@ -60,18 +36,17 @@ export function ProfileLanguageProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const changeRevision = ++revision.current;
     setLoading(true);
     try {
-      const profile = await profileRepo.updateLanguage(activeUserId, language);
-      if (revision.current === changeRevision) setLang(profile.preferredLanguage);
+      const updated = await updateAccountLanguage(language);
+      setLang(updated.preferredLanguage);
     } catch {
-      if (revision.current === changeRevision) setError(t('profile.languageSaveError'));
+      setError(t('profile.languageSaveError'));
       throw new Error(t('profile.languageSaveError'));
     } finally {
-      if (revision.current === changeRevision) setLoading(false);
+      setLoading(false);
     }
-  }, [activeUserId, setLang, t]);
+  }, [activeUserId, setLang, t, updateAccountLanguage]);
 
   return (
     <LanguagePreferenceContext.Provider value={{ loading, error, changeLanguage }}>

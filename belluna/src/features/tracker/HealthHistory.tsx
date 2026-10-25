@@ -28,11 +28,16 @@ import {
 } from './trackerData';
 
 type Props = { userId: string; dailyLogs: DailyLog[] };
-type SymptomFormValues = { date: string; code: string; severity: number };
+type SymptomFormValues = { recordedAt: string; code: string; severity: number; note: string };
 
 function localToday(): string {
   const today = new Date();
   return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+}
+
+function localDateTimeNow(): string {
+  const now = new Date();
+  return `${localToday()}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 }
 
 export default function HealthHistory({ userId, dailyLogs }: Props) {
@@ -46,13 +51,14 @@ export default function HealthHistory({ userId, dailyLogs }: Props) {
   const [loadedUserId, setLoadedUserId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [symptomSuccess, setSymptomSuccess] = useState('');
   const cycleForm = useForm<NewCycleEntry>({
     resolver: zodResolver(newCycleEntrySchema),
     defaultValues: { startDate: localToday(), endDate: null, notes: '' },
   });
   const symptomForm = useForm<SymptomFormValues>({
     resolver: zodResolver(symptomEntrySchema),
-    defaultValues: { date: localToday(), code: '', severity: 3 },
+    defaultValues: { recordedAt: localDateTimeNow(), code: '', severity: 3, note: '' },
   });
 
   async function reload(ownerId: string) {
@@ -78,8 +84,9 @@ export default function HealthHistory({ userId, dailyLogs }: Props) {
     setCycles([]);
     setCatalogue([]);
     setSymptoms([]);
+    setSymptomSuccess('');
     cycleForm.reset({ startDate: localToday(), endDate: null, notes: '' });
-    symptomForm.reset({ date: localToday(), code: '', severity: 3 });
+    symptomForm.reset({ recordedAt: localDateTimeNow(), code: '', severity: 3, note: '' });
 
     void Promise.all([
       cycleRepo.list(userId),
@@ -147,17 +154,44 @@ export default function HealthHistory({ userId, dailyLogs }: Props) {
     const ownerId = userId;
     setBusy(true);
     setError('');
+    setSymptomSuccess('');
     try {
+      if (!catalogue.some((item) => item.code === input.code)) {
+        symptomForm.setError('code', { message: 'Choose a symptom from the available list.' });
+        return;
+      }
+      const timestamp = new Date(input.recordedAt);
       await symptomRepo.upsert(ownerId, {
-        date: input.date,
+        date: input.recordedAt.slice(0, 10),
+        recordedAt: timestamp.toISOString(),
         code: input.code,
         severity: input.severity,
+        note: input.note,
       });
       if (activeUserId.current !== ownerId) return;
-      await reload(ownerId);
-    } catch {
+      setSymptomSuccess('Symptom entry saved.');
+      symptomForm.reset({
+        recordedAt: localDateTimeNow(),
+        code: input.code,
+        severity: 3,
+        note: '',
+      });
+      try {
+        await reload(ownerId);
+      } catch (refreshError) {
+        console.error('Symptom entry saved but refresh failed.', {
+          message: refreshError instanceof Error ? refreshError.message : 'Unknown refresh error',
+        });
+        setError('Symptom saved, but the entry list could not be refreshed. Reload to see it.');
+      }
+    } catch (saveError) {
       if (activeUserId.current === ownerId) {
-        setError(t('tracker.saveError'));
+        const details = saveError instanceof Error ? saveError.message : t('tracker.saveError');
+        const code = typeof saveError === 'object' && saveError !== null && 'code' in saveError
+          ? String(saveError.code)
+          : undefined;
+        console.error('Symptom entry save failed.', { code, message: details });
+        setError(details);
       }
     } finally {
       setBusy(false);
@@ -168,6 +202,7 @@ export default function HealthHistory({ userId, dailyLogs }: Props) {
     const ownerId = userId;
     setBusy(true);
     setError('');
+    setSymptomSuccess('');
     try {
       await symptomRepo.remove(ownerId, id);
       if (activeUserId.current === ownerId) {
@@ -259,7 +294,11 @@ export default function HealthHistory({ userId, dailyLogs }: Props) {
             <form className="card space-y-3" onSubmit={symptomForm.handleSubmit((input) => void saveSymptom(input))}>
               <h3 className="font-semibold">{t('tracker.addSymptom')}</h3>
               {Object.keys(symptomForm.formState.errors).length > 0 && (
-                <p role="alert" className="text-sm text-red-700">{t('tracker.validationError')}</p>
+                <ul role="alert" className="text-sm text-red-700">
+                  {Object.values(symptomForm.formState.errors).map((fieldError, index) => (
+                    fieldError?.message ? <li key={index}>{fieldError.message}</li> : null
+                  ))}
+                </ul>
               )}
               {catalogue.length === 0 ? (
                 <p className="text-sm text-ink/60">{t('tracker.catalogEmpty')}</p>
@@ -276,8 +315,8 @@ export default function HealthHistory({ userId, dailyLogs }: Props) {
                     </select>
                   </label>
                   <label className="block text-sm">
-                    {t('tracker.symptomDate')}
-                    <input className="input mt-1" type="date" required {...symptomForm.register('date')} />
+                    Date and time
+                    <input className="input mt-1" type="datetime-local" required {...symptomForm.register('recordedAt')} />
                   </label>
                   <label className="block text-sm">
                     {t('tracker.severity')}
@@ -286,22 +325,40 @@ export default function HealthHistory({ userId, dailyLogs }: Props) {
                       {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}/5</option>)}
                     </select>
                   </label>
-                  <button className="btn-primary" disabled={busy}>{t('tracker.saveSymptom')}</button>
+                  <label className="block text-sm">
+                    Note (optional)
+                    <textarea className="input mt-1" maxLength={500} rows={2} {...symptomForm.register('note')} />
+                  </label>
+                  <button type="submit" className="btn-primary" disabled={busy || catalogue.length === 0}>
+                    {busy ? 'Saving…' : t('tracker.saveSymptom')}
+                  </button>
                 </>
               )}
+              {symptomSuccess && <p role="status" className="text-sm text-green-700">{symptomSuccess}</p>}
               {symptoms.length > 0 && (
                 <ul className="divide-y divide-soft">
                   {symptoms.slice(0, 10).map((symptom) => {
                     const definition = catalogue.find((item) => item.code === symptom.code);
                     return (
                       <li key={symptom.id} className="flex items-center justify-between gap-3 py-2 text-sm">
-                        <span>{dateLabel(symptom.date)} · {definition ? (lang === 'hi' ? definition.labelHi : definition.labelEn) : symptom.code} · {symptom.severity}/5</span>
+                        <span>
+                          {new Intl.DateTimeFormat(lang === 'hi' ? 'hi-IN' : 'en', {
+                            dateStyle: 'medium',
+                            timeStyle: 'short',
+                          }).format(new Date(symptom.recordedAt))}
+                          {' · '}{definition ? (lang === 'hi' ? definition.labelHi : definition.labelEn) : symptom.code}
+                          {' · '}{symptom.severity}/5
+                          {symptom.note && <span className="block text-xs text-ink/60">{symptom.note}</span>}
+                        </span>
                         <button type="button" className="text-red-700 underline" disabled={busy}
                           onClick={() => void deleteSymptom(symptom.id)}>{t('tracker.delete')}</button>
                       </li>
                     );
                   })}
                 </ul>
+              )}
+              {symptoms.length === 0 && (
+                <p className="text-sm text-ink/60">No symptom entries yet.</p>
               )}
             </form>
           </div>

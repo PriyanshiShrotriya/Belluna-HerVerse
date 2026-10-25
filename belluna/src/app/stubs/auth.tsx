@@ -3,11 +3,15 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
 import type { Session as SupabaseSession } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
+import { profileRepo } from '../../features/auth/profileRepository';
+import type { Profile } from '../../lib/db/profile';
+import type { Lang } from '../../i18n/t';
 
 type Session = {
   userId: string;
@@ -18,6 +22,12 @@ type Session = {
 type AuthCtx = {
   session: Session;
   loading: boolean;
+  profile: Profile | null;
+  profileLoading: boolean;
+  profileError: string;
+  refreshProfile: () => Promise<Profile>;
+  confirmAdultStatus: () => Promise<Profile>;
+  updateLanguage: (language: Lang) => Promise<Profile>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -38,17 +48,129 @@ function toAppSession(value: SupabaseSession | null): Session {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session>(null);
   const [loading, setLoading] = useState(true);
+  const [profileState, setProfileState] = useState<{
+    userId: string | null;
+    profile: Profile | null;
+    loading: boolean;
+    error: string;
+  }>({ userId: null, profile: null, loading: false, error: '' });
+  const sessionRef = useRef<Session>(null);
+  const profileRequest = useRef(0);
+  const confirmationRequests = useRef(new Set<string>());
 
   useEffect(() => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, value) => {
-      setSession(toAppSession(value));
+      const nextSession = toAppSession(value);
+      if (sessionRef.current?.userId !== nextSession?.userId) {
+        profileRequest.current += 1;
+      }
+      sessionRef.current = nextSession;
+      setSession(nextSession);
       setLoading(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    const userId = session?.userId ?? null;
+    const requestId = ++profileRequest.current;
+    if (!userId) {
+      setProfileState({ userId: null, profile: null, loading: false, error: '' });
+      return;
+    }
+
+    setProfileState({ userId, profile: null, loading: true, error: '' });
+    void profileRepo.get(userId).then((profile) => {
+      if (requestId === profileRequest.current && sessionRef.current?.userId === userId) {
+        setProfileState({ userId, profile, loading: false, error: '' });
+      }
+    }).catch((error: unknown) => {
+      if (requestId === profileRequest.current && sessionRef.current?.userId === userId) {
+        setProfileState({
+          userId,
+          profile: null,
+          loading: false,
+          error: error instanceof Error ? error.message : 'Could not load your profile.',
+        });
+      }
+    });
+  }, [session?.userId]);
+
+  const refreshProfile = async (): Promise<Profile> => {
+    const userId = sessionRef.current?.userId;
+    if (!userId) throw new Error('Sign in to load your profile.');
+    const requestId = ++profileRequest.current;
+    setProfileState((current) => ({
+      userId,
+      profile: current.userId === userId ? current.profile : null,
+      loading: true,
+      error: '',
+    }));
+    try {
+      const profile = await profileRepo.get(userId);
+      if (requestId !== profileRequest.current || sessionRef.current?.userId !== userId) {
+        throw new Error('The signed-in account changed. Please retry.');
+      }
+      setProfileState({ userId, profile, loading: false, error: '' });
+      return profile;
+    } catch (error) {
+      if (requestId === profileRequest.current && sessionRef.current?.userId === userId) {
+        setProfileState({
+          userId,
+          profile: null,
+          loading: false,
+          error: error instanceof Error ? error.message : 'Could not load your profile.',
+        });
+      }
+      throw error;
+    }
+  };
+
+  const confirmAdultStatus = async (): Promise<Profile> => {
+    const userId = sessionRef.current?.userId;
+    if (!userId) throw new Error('Sign in to confirm your age.');
+    if (confirmationRequests.current.has(userId)) {
+      throw new Error('Confirmation is already in progress.');
+    }
+    confirmationRequests.current.add(userId);
+    try {
+      const profile = await profileRepo.confirmAdultStatus(userId);
+      if (sessionRef.current?.userId !== userId) {
+        throw new Error('The signed-in account changed. Please retry.');
+      }
+      setProfileState({ userId, profile, loading: false, error: '' });
+      return profile;
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : 'Could not confirm your age. Check your connection and try again.';
+      if (sessionRef.current?.userId === userId) {
+        setProfileState((current) => ({
+          userId: current.userId === userId ? userId : null,
+          profile: current.userId === userId ? current.profile : null,
+          loading: current.userId !== userId,
+          error: '',
+        }));
+      }
+      throw new Error(message);
+    } finally {
+      confirmationRequests.current.delete(userId);
+    }
+  };
+
+  const updateLanguage = async (language: Lang): Promise<Profile> => {
+    const userId = sessionRef.current?.userId;
+    if (!userId) throw new Error('Sign in to update your profile.');
+    const profile = await profileRepo.updateLanguage(userId, language);
+    if (sessionRef.current?.userId !== userId) {
+      throw new Error('The signed-in account changed. Please retry.');
+    }
+    setProfileState({ userId, profile, loading: false, error: '' });
+    return profile;
+  };
 
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({
@@ -77,10 +199,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
+    sessionRef.current = null;
+    profileRequest.current += 1;
+    setSession(null);
+    setProfileState({ userId: null, profile: null, loading: false, error: '' });
   };
 
+  const profileMatchesSession = Boolean(session && profileState.userId === session.userId);
   return (
-    <Ctx.Provider value={{ session, loading, signIn, signUp, signOut }}>
+    <Ctx.Provider value={{
+      session,
+      loading,
+      profile: profileMatchesSession ? profileState.profile : null,
+      profileLoading: Boolean(session && (!profileMatchesSession || profileState.loading)),
+      profileError: profileMatchesSession ? profileState.error : '',
+      refreshProfile,
+      confirmAdultStatus,
+      updateLanguage,
+      signIn,
+      signUp,
+      signOut,
+    }}>
       {children}
     </Ctx.Provider>
   );

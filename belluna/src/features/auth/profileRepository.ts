@@ -42,6 +42,18 @@ export const profileRepo: ProfileRepo = {
     return mapProfile(data);
   },
 
+  async confirmAdultStatus(userId) {
+    const ownerId = await verifiedUserId(userId);
+    const { error } = await supabase.rpc('confirm_adult_status');
+    if (error) throw error;
+    await verifiedUserId(ownerId);
+    const profile = await this.get(ownerId);
+    if (!profile.adultConfirmed) {
+      throw new Error('Your age confirmation could not be verified. Please try again.');
+    }
+    return profile;
+  },
+
   async updateLanguage(userId, language) {
     if (language !== 'en' && language !== 'hi') {
       throw new Error('Choose English or Hindi.');

@@ -10,5 +10,6 @@ export type Profile = {
 
 export interface ProfileRepo {
   get(userId: string): Promise<Profile>;
+  confirmAdultStatus(userId: string): Promise<Profile>;
   updateLanguage(userId: string, language: Lang): Promise<Profile>;
 }
