@@ -235,17 +235,22 @@ export default function Doctors() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8">
+    <div className="mx-auto max-w-7xl px-4 py-7 sm:px-6 sm:py-10">
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-ink">{t('dr.title')}</h1>
-        <p className="mt-1 text-ink/70">{t('dr.sub')}</p>
+      <div className="mb-6 rounded-[2rem] bg-gradient-to-br from-[#f1eaff] via-[#fff9fc] to-[#eef5ff] p-5 sm:p-7">
+        <div className="flex items-center gap-3">
+          <span className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-primary shadow-sm"><Heart size={21} /></span>
+          <p className="text-xs font-semibold uppercase tracking-[.15em] text-primary/70">Care, closer to you</p>
+        </div>
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight text-ink sm:text-4xl">{t('dr.title')}</h1>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-ink/65">{t('dr.sub')}</p>
       </div>
 
       {/* Search controls */}
-      <div className="card mb-5 grid gap-4 md:grid-cols-2">
+      <div className="card mb-5 grid gap-5 border-lavender/20 bg-white/90 p-4 sm:p-6 md:grid-cols-2">
         <div>
-          <p className="text-sm text-ink/80">{t('dr.consent')}</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-primary/70">Use your location</p>
+          <p className="mt-2 text-sm leading-6 text-ink/65">{t('dr.consent')}</p>
           <button className="btn-primary mt-3" onClick={locate}>
             <MapPin size={18} /> {t('dr.use')}
           </button>
@@ -266,7 +271,7 @@ export default function Doctors() {
       {msg && <p role="status" className="mb-3 text-sm text-ink/80">{msg}</p>}
 
       {/* Map */}
-      <div ref={mapEl} className="h-80 rounded-2xl border border-soft shadow-sm md:h-[420px]"
+      <div ref={mapEl} className="h-80 overflow-hidden rounded-3xl border border-soft shadow-card md:h-[420px]"
         role="region" aria-label={t('dr.title')} />
       <p className="mt-1 text-xs text-ink/50">Map data © OpenStreetMap contributors</p>
 
@@ -317,7 +322,7 @@ export default function Doctors() {
         {state === 'done' && visibleList.map((f) => {
           const color = COLORS[f.type];
           return (
-            <div key={f.id} className="card flex flex-wrap items-center justify-between gap-3 hover:border-lavender transition-colors">
+            <div key={f.id} className="card flex flex-wrap items-center justify-between gap-3 transition-all hover:border-lavender/70 hover:shadow-md">
               <div className="flex items-start gap-3">
                 <div
                   className="mt-0.5 h-3 w-3 shrink-0 rounded-full"

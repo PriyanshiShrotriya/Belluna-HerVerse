@@ -46,8 +46,8 @@ function NicknameChooser({ onEnter }: { onEnter: (name: string, avatar: string) 
     }
 
     return (
-        <div className="mx-auto max-w-md px-4 py-16 text-center">
-            <div className="text-6xl mb-4">💜</div>
+        <div className="mx-auto max-w-md px-4 py-12 text-center sm:py-16">
+            <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-3xl bg-gradient-to-br from-soft to-blush text-4xl shadow-sm">💜</div>
             <h1 className="text-2xl font-bold mb-1">{t('circle.choose.title')}</h1>
             <p className="text-sm text-ink/60 mb-8">{t('circle.choose.sub')}</p>
 
@@ -144,13 +144,17 @@ export function Community() {
     }
 
     return (
-        <div className="mx-auto max-w-2xl px-4 py-8">
+        <div className="mx-auto max-w-3xl px-4 py-7 sm:px-6 sm:py-10">
             {/* Header */}
-            <div className="flex items-center gap-3 mb-2">
-                <Users className="text-primary" size={28} />
-                <h1 className="text-2xl font-semibold">{t('circle.title')}</h1>
+            <div className="mb-5 rounded-[2rem] bg-gradient-to-br from-[#f2ecff] via-[#fff8fc] to-[#fcecf4] p-5 sm:p-7">
+                <div className="mb-3 flex items-center gap-3">
+                    <span className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-primary shadow-sm"><Users size={21} /></span>
+                    <p className="text-xs font-semibold uppercase tracking-[.15em] text-primary/70">A softer space to share</p>
+                </div>
+                <h1 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">{t('circle.title')}</h1>
+                <p className="mt-2 max-w-xl text-sm leading-6 text-ink/65">Connect with people who understand. Share at your pace, with a nickname that feels right.</p>
             </div>
-            <div className="flex items-start gap-2 rounded-xl bg-lavender/20 p-3 mb-5 text-sm text-primary">
+            <div className="mb-5 flex items-start gap-2 rounded-2xl border border-primary/10 bg-white/80 p-3 text-sm text-primary">
                 <ShieldCheck size={16} className="mt-0.5 shrink-0" />
                 <span>{t('circle.body')} {t('circle.my.post')}: <strong>{myAvatar} {myName}</strong></span>
             </div>
@@ -195,7 +199,7 @@ export function Community() {
                     </div>
                 )}
                 {filtered.map(p => (
-                    <div key={p.id} className="card">
+                    <div key={p.id} className="card transition-shadow hover:shadow-md">
                         {/* Author + time */}
                         <div className="flex items-center gap-2 mb-3">
                             <span className="text-xl">{p.avatar}</span>
