@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { I18nProvider } from '../i18n/t';
 import { AuthProvider } from './stubs/auth';
 import ErrorBoundary from './ErrorBoundary';
@@ -13,6 +13,8 @@ import Sos from '../features/sos/Sos';
 import { SettingsPage } from '../features/misc/Misc';
 import { Loading } from '../components/States';
 import { useAuth } from './stubs/auth';
+import { getProfileAccessState } from './profileAccess';
+import { ProfileLoadError, AdultConfirmationRoute } from '../features/auth/AdultConfirmation';
 
 const Translator = lazy(() => import('../features/translator/Translator'));
 const Doctors = lazy(() => import('../features/doctors/Doctors'));
@@ -22,9 +24,25 @@ const Awareness = lazy(() => import('../features/learn/Awareness'));
 const Community = lazy(() => import('../features/community/Community'));
 
 function Home() {
-  const { session, loading } = useAuth();
-  if (loading) return <Loading />;
-  return session ? <Dashboard /> : <Landing />;
+  const {
+    session, loading, profile, profileLoading, profileError, refreshProfile,
+  } = useAuth();
+  const access = getProfileAccessState({
+    authLoading: loading,
+    userId: session?.userId ?? null,
+    profile,
+    profileLoading,
+    profileError,
+  });
+  if (access === 'loading-auth' || access === 'loading-profile') return <Loading />;
+  if (access === 'signed-out') return <Landing />;
+  if (access === 'profile-error') {
+    return <ProfileLoadError message={profileError} onRetry={async () => { await refreshProfile(); }} />;
+  }
+  if (access === 'confirmation-required') {
+    return <Navigate to="/confirm-age" replace state={{ from: '/' }} />;
+  }
+  return <Dashboard />;
 }
 
 export default function App() {
@@ -37,6 +55,7 @@ export default function App() {
               <Route path="/" element={<Home />} />
               <Route path="/login" element={<AuthPage mode="login" />} />
               <Route path="/signup" element={<AuthPage mode="signup" />} />
+              <Route path="/confirm-age" element={<AdultConfirmationRoute />} />
               <Route path="/sos" element={<Sos />} />
               <Route path="/doctors" element={<Doctors />} />
               <Route path="/medicines" element={<MedicineLibrary />} />

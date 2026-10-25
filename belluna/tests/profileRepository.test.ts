@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   getUser: vi.fn(),
   from: vi.fn(),
+  rpc: vi.fn(),
 }));
 
 vi.mock('../src/lib/supabase', () => ({
   supabase: {
     auth: { getUser: mocks.getUser },
     from: mocks.from,
+    rpc: mocks.rpc,
   },
 }));
 
@@ -66,6 +68,37 @@ describe('authenticated profile repository', () => {
     expect(result.preferredLanguage).toBe('en');
     expect(query.update).toHaveBeenCalledWith({ preferred_language: 'en' });
     expect(query.eq).toHaveBeenCalledWith('id', 'synthetic-user-a');
+  });
+
+  it('confirms age through the caller-bound RPC and refreshes the profile', async () => {
+    const confirmedProfile = { ...profile, adult_confirmed: true };
+    const query = profileQuery({ data: confirmedProfile, error: null });
+    mocks.rpc.mockResolvedValue({ error: null });
+
+    await expect(profileRepo.confirmAdultStatus('synthetic-user-a')).resolves.toMatchObject({
+      id: 'synthetic-user-a',
+      adultConfirmed: true,
+    });
+    expect(mocks.rpc).toHaveBeenCalledWith('confirm_adult_status');
+    expect(mocks.from).toHaveBeenCalledWith('profiles');
+    expect(query.update).not.toHaveBeenCalled();
+  });
+
+  it('does not load or confirm a profile when the confirmation RPC fails', async () => {
+    mocks.rpc.mockResolvedValue({ error: { message: 'network unavailable' } });
+
+    await expect(profileRepo.confirmAdultStatus('synthetic-user-a'))
+      .rejects.toThrow('network unavailable');
+    expect(mocks.rpc).toHaveBeenCalledWith('confirm_adult_status');
+    expect(mocks.from).not.toHaveBeenCalled();
+  });
+
+  it('does not claim confirmation if the refreshed profile is still unconfirmed', async () => {
+    profileQuery({ data: profile, error: null });
+    mocks.rpc.mockResolvedValue({ error: null });
+
+    await expect(profileRepo.confirmAdultStatus('synthetic-user-a'))
+      .rejects.toThrow('could not be verified');
   });
 
   it('rejects a profile request when the session belongs to another user', async () => {

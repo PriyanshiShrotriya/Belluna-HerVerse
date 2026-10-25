@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import en from './en.json';
 import hi from './hi.json';
 
@@ -12,9 +12,11 @@ const Ctx = createContext<{ lang: Lang; setLang: (l: Lang) => void; t: (k: Key) 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => (localStorage.getItem('belluna.lang') === 'hi' ? 'hi' : 'en'));
   useEffect(() => { document.documentElement.lang = lang; }, [lang]);
-  const setLang = (l: Lang) => { localStorage.setItem('belluna.lang', l); setLangState(l); };
+  const setLang = useCallback((l: Lang) => {
+    localStorage.setItem('belluna.lang', l);
+    setLangState(l);
+  }, []);
   const t = (k: Key) => dict[lang][k] ?? dict.en[k] ?? k;
   return <Ctx.Provider value={{ lang, setLang, t }}>{children}</Ctx.Provider>;
 }
 export const useT = () => useContext(Ctx);
-
