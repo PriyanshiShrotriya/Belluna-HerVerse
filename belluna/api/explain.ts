@@ -1,18 +1,18 @@
 import {
   explainRequestSchema,
   explainResponseSchema,
-} from '../src/features/translator/schemas';
+} from '../src/features/translator/schemas.js';
 import { z } from 'zod';
 import {
   createSafetyResponse,
   screenQuestion,
-} from './_lib/safety';
+} from './_lib/safety.js';
 import {
   detectQuestionLanguage,
   hasExpectedResponseStyle,
   responseLanguage,
-} from './_lib/language';
-import { approvedSourceIds, mapTrustedSources } from './_lib/sources';
+} from './_lib/language.js';
+import { approvedSourceIds, mapTrustedSources } from './_lib/sources.js';
 
 interface VercelRequest {
   method?: string;
