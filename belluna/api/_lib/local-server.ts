@@ -2,6 +2,7 @@
 import { createServer } from 'node:http';
 import explainHandler from '../explain';
 import newsHandler from '../awareness/news';
+import nearbyCareHandler from '../nearby-care';
 
 const port = Number(process.env.API_PORT ?? 8788);
 
@@ -42,6 +43,17 @@ const server = createServer(async (request, response) => {
 
     if (url.pathname === '/api/awareness/news') {
       await newsHandler(
+        {
+          method: request.method,
+          query: Object.fromEntries(url.searchParams.entries()),
+        },
+        vercelResponse,
+      );
+      return;
+    }
+
+    if (url.pathname === '/api/nearby-care') {
+      await nearbyCareHandler(
         {
           method: request.method,
           query: Object.fromEntries(url.searchParams.entries()),

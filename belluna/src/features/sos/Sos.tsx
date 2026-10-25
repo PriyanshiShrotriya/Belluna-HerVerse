@@ -10,7 +10,7 @@ type SosPanel = null | 'unexpected' | 'pad' | 'cramps' | 'urgent';
 type PharmacyResult = { id: string; name: string; lat: number; lon: number; dist: number };
 
 
-const OVERPASS = 'https://overpass-api.de/api/interpreter';
+const pharmacyCache = new Map<string, Promise<PharmacyResult[]>>();
 const km = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
   const r = Math.PI / 180;
   const dx = (b.lon - a.lon) * r * Math.cos(((a.lat + b.lat) / 2) * r);
@@ -19,15 +19,57 @@ const km = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) =>
 };
 
 async function fetchPharmacies(p: { lat: number; lon: number }): Promise<PharmacyResult[]> {
-  const q = `[out:json][timeout:15];(nwr["amenity"="pharmacy"](around:3000,${p.lat},${p.lon}););out center tags 20;`;
-  const r = await fetch(OVERPASS, { method: 'POST', body: 'data=' + encodeURIComponent(q) });
-  if (!r.ok) throw new Error('overpass');
-  const j = await r.json() as { elements: { type: string; id: number; lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }[] };
-  return j.elements.flatMap((e): PharmacyResult[] => {
-    const lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
-    if (lat == null || lon == null) return [];
-    return [{ id: `${e.type}${e.id}`, name: e.tags?.name ?? '', lat, lon, dist: km(p, { lat, lon }) }];
-  }).sort((a, b) => a.dist - b.dist).slice(0, 10);
+  const key = `${p.lat.toFixed(2)},${p.lon.toFixed(2)}`;
+  const cached = pharmacyCache.get(key);
+  if (cached) return cached;
+
+  const request = (async () => {
+    const params = new URLSearchParams({
+      lat: String(p.lat),
+      lon: String(p.lon),
+      kind: 'pharmacy',
+    });
+    const response = await fetch(`/api/nearby-care?${params}`);
+    const result = await response.json().catch(() => null) as {
+      error?: string;
+      elements?: {
+        type: string;
+        id: number;
+        lat?: number;
+        lon?: number;
+        center?: { lat: number; lon: number };
+        tags?: Record<string, string>;
+      }[];
+    };
+
+    if (!response.ok) {
+      throw new Error(result?.error || 'Nearby pharmacies are temporarily unavailable.');
+    }
+    if (!Array.isArray(result?.elements)) {
+      throw new Error('Nearby pharmacy data could not be read. Please try again later.');
+    }
+
+    return result.elements.flatMap((element): PharmacyResult[] => {
+      const lat = element.lat ?? element.center?.lat;
+      const lon = element.lon ?? element.center?.lon;
+      if (lat == null || lon == null) return [];
+      return [{
+        id: `${element.type}${element.id}`,
+        name: element.tags?.name ?? '',
+        lat,
+        lon,
+        dist: km(p, { lat, lon }),
+      }];
+    }).sort((a, b) => a.dist - b.dist).slice(0, 10);
+  })();
+
+  pharmacyCache.set(key, request);
+  try {
+    return await request;
+  } catch (error) {
+    pharmacyCache.delete(key);
+    throw error;
+  }
 }
 
 function TipCard({ emoji, text }: { emoji: string; text: string }) {
@@ -82,7 +124,8 @@ function PadFinderPanel() {
           .bindPopup(`<strong>${x.name || 'Pharmacy'}</strong><br/>${x.dist.toFixed(1)} km`).addTo(layer.current!);
       });
       map.current?.setView([p.lat, p.lon], 14);
-    } catch {
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : t('sos.pad.fail'));
       setState('error');
     }
   }
@@ -144,8 +187,8 @@ function PadFinderPanel() {
           <MapPin size={16} /> {t('sos.pad.search')}
         </button>
       </form>
-      {msg && <p className="text-sm text-slate-500">{msg}</p>}
-      {state === 'error' && <p role="alert" className="text-sm text-red-600">{t('sos.pad.fail')}</p>}
+      {msg && state !== 'error' && <p className="text-sm text-slate-500">{msg}</p>}
+      {state === 'error' && <p role="alert" className="text-sm text-red-600">{msg || t('sos.pad.fail')}</p>}
       <div ref={mapEl} className="h-56 rounded-2xl border border-purple-100 shadow-sm" />
       {state === 'done' && list.length === 0 && (
         <p className="text-sm text-slate-500 text-center py-4">{t('sos.pad.none')}</p>

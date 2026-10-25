@@ -19,8 +19,7 @@ type Pt = { lat: number; lon: number };
 
 type FilterTab = 'all' | 'healthcare' | 'pharmacy' | 'gynaecologist';
 
-const OVERPASS = 'https://overpass-api.de/api/interpreter';
-const cache = new Map<string, Facility[]>();
+const cache = new Map<string, Promise<Facility[]>>();
 
 const COLORS: Record<FacilityType, string> = {
   hospital: '#6D3AAE',
@@ -59,72 +58,80 @@ async function fetchFacilities(p: Pt): Promise<Facility[]> {
   const hit = cache.get(key);
   if (hit) return hit;
 
-  // Query 1: healthcare facilities + pharmacies + gynaecology
-  const q = `[out:json][timeout:25];(
-    nwr["amenity"~"^(hospital|clinic|doctors|pharmacy)$"](around:5000,${p.lat},${p.lon});
-    nwr["healthcare"~"^(gynaecologist|midwife|maternity)$"](around:5000,${p.lat},${p.lon});
-    nwr["healthcare:speciality"~"gynaecology|obstetrics"](around:5000,${p.lat},${p.lon});
-  );out center tags 60;`;
+  const request = (async () => {
+    const params = new URLSearchParams({ lat: String(p.lat), lon: String(p.lon) });
+    const response = await fetch(`/api/nearby-care?${params}`);
+    const result = await response.json().catch(() => null) as {
+      error?: string;
+      elements?: {
+        type: string;
+        id: number;
+        lat?: number;
+        lon?: number;
+        center?: Pt;
+        tags?: Record<string, string>;
+      }[];
+    };
 
-  const r = await fetch(OVERPASS, { method: 'POST', body: 'data=' + encodeURIComponent(q) });
-  if (!r.ok) throw new Error('overpass');
-
-  const j = (await r.json()) as {
-    elements: {
-      type: string;
-      id: number;
-      lat?: number;
-      lon?: number;
-      center?: Pt;
-      tags?: Record<string, string>;
-    }[];
-  };
-
-  const seen = new Set<string>();
-  const out = j.elements.flatMap((e): Facility[] => {
-    const lat = e.lat ?? e.center?.lat;
-    const lon = e.lon ?? e.center?.lon;
-    if (lat == null || lon == null) return [];
-    const tags = e.tags ?? {};
-    const amenity = tags['amenity'];
-    const healthcare = tags['healthcare'];
-
-    let type: FacilityType | null = null;
-
-    if (amenity === 'pharmacy') {
-      type = 'pharmacy';
-    } else if (
-      healthcare === 'gynaecologist' ||
-      healthcare === 'midwife' ||
-      healthcare === 'maternity' ||
-      isGyno(tags)
-    ) {
-      type = 'gynaecologist';
-    } else if (amenity === 'hospital' && isGyno(tags)) {
-      type = 'gynaecologist';
-    } else if (amenity === 'hospital' || amenity === 'clinic' || amenity === 'doctors') {
-      type = amenity as FacilityType;
-    } else {
-      return [];
+    if (!response.ok) {
+      throw new Error(result?.error || 'Nearby care data is temporarily unavailable.');
+    }
+    const elements = result?.elements;
+    if (!Array.isArray(elements)) {
+      throw new Error('Nearby care data could not be read. Please try again later.');
     }
 
-    const uid = `${e.type}${e.id}`;
-    if (seen.has(uid)) return [];
-    seen.add(uid);
+    const seen = new Set<string>();
+    return elements.flatMap((e): Facility[] => {
+      const lat = e.lat ?? e.center?.lat;
+      const lon = e.lon ?? e.center?.lon;
+      if (lat == null || lon == null) return [];
+      const tags = e.tags ?? {};
+      const amenity = tags['amenity'];
+      const healthcare = tags['healthcare'];
 
-    return [{
-      id: uid,
-      name: tags['name'] ?? '',
-      type,
-      lat,
-      lon,
-      phone: tags['phone'] ?? tags['contact:phone'],
-      dist: km(p, { lat, lon }),
-    }];
-  }).sort((a, b) => a.dist - b.dist);
+      let type: FacilityType | null = null;
 
-  cache.set(key, out);
-  return out;
+      if (amenity === 'pharmacy') {
+        type = 'pharmacy';
+      } else if (
+        healthcare === 'gynaecologist' ||
+        healthcare === 'midwife' ||
+        healthcare === 'maternity' ||
+        isGyno(tags)
+      ) {
+        type = 'gynaecologist';
+      } else if (amenity === 'hospital' && isGyno(tags)) {
+        type = 'gynaecologist';
+      } else if (amenity === 'hospital' || amenity === 'clinic' || amenity === 'doctors') {
+        type = amenity as FacilityType;
+      } else {
+        return [];
+      }
+
+      const uid = `${e.type}${e.id}`;
+      if (seen.has(uid)) return [];
+      seen.add(uid);
+
+      return [{
+        id: uid,
+        name: tags['name'] ?? '',
+        type,
+        lat,
+        lon,
+        phone: tags['phone'] ?? tags['contact:phone'],
+        dist: km(p, { lat, lon }),
+      }];
+    }).sort((a, b) => a.dist - b.dist);
+  })();
+
+  cache.set(key, request);
+  try {
+    return await request;
+  } catch (error) {
+    cache.delete(key);
+    throw error;
+  }
 }
 
 const FILTER_TABS: { key: FilterTab; label: string; icon: React.ElementType; color: string }[] = [
@@ -201,7 +208,8 @@ export default function Doctors() {
       });
 
       map.current?.setView([p.lat, p.lon], 14);
-    } catch {
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : t('dr.fail'));
       setState('error');
     }
   }
@@ -289,7 +297,7 @@ export default function Doctors() {
         </form>
       </div>
 
-      {msg && <p role="status" className="mb-3 text-sm text-ink/80">{msg}</p>}
+      {msg && state !== 'error' && <p role="status" className="mb-3 text-sm text-ink/80">{msg}</p>}
 
       {/* Map */}
       <div ref={mapEl} className="h-80 overflow-hidden rounded-3xl border border-soft shadow-card md:h-[420px]"
@@ -337,7 +345,7 @@ export default function Doctors() {
       {/* Results */}
       <div className="mt-5 space-y-3" aria-live="polite">
         {state === 'loading' && <Loading text={t('dr.searching')} />}
-        {state === 'error' && <><ErrorBox text={t('dr.fail')} /><Empty text={t('dr.nofallback')} /></>}
+        {state === 'error' && <><ErrorBox text={msg || t('dr.fail')} /><Empty text={t('dr.nofallback')} /></>}
         {state === 'done' && visibleList.length === 0 && <Empty text={t('dr.none')} />}
 
         {state === 'done' && visibleList.map((f) => {
