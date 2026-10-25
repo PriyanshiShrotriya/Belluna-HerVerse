@@ -1,0 +1,61 @@
+import { supabase } from '../../lib/supabase';
+import type { ProfileRepo } from '../../lib/db/profile';
+import type { Lang } from '../../i18n/t';
+
+async function verifiedUserId(expectedUserId: string): Promise<string> {
+  const { data, error } = await supabase.auth.getUser();
+  if (error) throw error;
+  if (!data.user) throw new Error('Please sign in to access your profile.');
+  if (data.user.id !== expectedUserId) {
+    throw new Error('The signed-in account changed. Please reload your profile.');
+  }
+  return data.user.id;
+}
+
+function mapProfile(row: {
+  id: string;
+  handle: string;
+  preferred_language: Lang;
+  adult_confirmed: boolean;
+  created_at: string;
+}) {
+  return {
+    id: row.id,
+    handle: row.handle,
+    preferredLanguage: row.preferred_language,
+    adultConfirmed: row.adult_confirmed,
+    createdAt: row.created_at,
+  };
+}
+
+export const profileRepo: ProfileRepo = {
+  async get(userId) {
+    const ownerId = await verifiedUserId(userId);
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, handle, preferred_language, adult_confirmed, created_at')
+      .eq('id', ownerId)
+      .single();
+    if (error) throw error;
+    await verifiedUserId(ownerId);
+    if (!data || data.id !== ownerId) throw new Error('Your profile could not be confirmed.');
+    return mapProfile(data);
+  },
+
+  async updateLanguage(userId, language) {
+    if (language !== 'en' && language !== 'hi') {
+      throw new Error('Choose English or Hindi.');
+    }
+    const ownerId = await verifiedUserId(userId);
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ preferred_language: language })
+      .eq('id', ownerId)
+      .select('id, handle, preferred_language, adult_confirmed, created_at')
+      .single();
+    if (error) throw error;
+    await verifiedUserId(ownerId);
+    if (!data || data.id !== ownerId) throw new Error('Your profile language could not be confirmed.');
+    return mapProfile(data);
+  },
+};

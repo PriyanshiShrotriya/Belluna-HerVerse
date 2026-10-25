@@ -8,7 +8,6 @@ import Logo from '../../components/Logo';
 import { LangSwitch } from '../../components/Layout';
 import { useT } from '../../i18n/t';
 import { useAuth } from '../../app/stubs/auth';
-import { ErrorBox } from '../../components/States';
 
 const schema = z.object({ email: z.string().email(), password: z.string().min(8) });
 type Form = z.infer<typeof schema>;
@@ -19,12 +18,18 @@ export default function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   const nav = useNavigate();
   const loc = useLocation() as { state?: { from?: string } };
   const [show, setShow] = useState(false);
-  const [err, setErr] = useState(false);
+  const [err, setErr] = useState('');
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<Form>({ resolver: zodResolver(schema) });
   const onSubmit = async (v: Form) => {
-    setErr(false);
+    setErr('');
     try { await (mode === 'login' ? signIn : signUp)(v.email, v.password); nav(loc.state?.from ?? '/', { replace: true }); }
-    catch { setErr(true); }
+    catch (error) {
+  setErr(
+    error instanceof Error
+      ? error.message
+      : 'Authentication failed. Please try again.'
+  );
+}
   };
   return (
     <div className="mx-auto grid min-h-[70vh] max-w-md place-items-center px-4 py-10">
@@ -46,7 +51,11 @@ export default function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
             </div>
             {errors.password && <p role="alert" className="mt-1 text-sm text-[#B42318]">{t('auth.err.password')}</p>}
           </div>
-          {err && <ErrorBox />}
+          {err && (
+  <p role="alert" className="mt-1 text-sm text-[#B42318]">
+    {err}
+  </p>
+)}
           <button className="btn-primary w-full" disabled={isSubmitting}>{isSubmitting ? t('auth.working') : t(mode === 'login' ? 'auth.submit.login' : 'auth.submit.signup')}</button>
         </form>
         <p className="mt-4 text-sm">{t(mode === 'login' ? 'auth.noaccount' : 'auth.haveaccount')}{' '}

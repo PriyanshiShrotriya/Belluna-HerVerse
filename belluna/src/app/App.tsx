@@ -8,6 +8,7 @@ import Layout from '../components/Layout';
 import Landing from '../features/landing/Landing';
 import Dashboard from '../features/dashboard/Dashboard';
 import AuthPage from '../features/auth/AuthPage';
+import { ProfileLanguageProvider } from '../features/auth/ProfileLanguageProvider';
 import Sos from '../features/sos/Sos';
 import { SettingsPage } from '../features/misc/Misc';
 import { Loading } from '../components/States';
@@ -20,12 +21,16 @@ const MedicineLibrary = lazy(() => import('../features/medicines/MedicineLibrary
 const Awareness = lazy(() => import('../features/learn/Awareness'));
 const Community = lazy(() => import('../features/community/Community'));
 
-function Home() { const { session } = useAuth(); return session ? <Dashboard /> : <Landing />; }
+function Home() {
+  const { session, loading } = useAuth();
+  if (loading) return <Loading />;
+  return session ? <Dashboard /> : <Landing />;
+}
 
 export default function App() {
   return (
     <ErrorBoundary>
-      <I18nProvider><AuthProvider><BrowserRouter>
+      <I18nProvider><AuthProvider><ProfileLanguageProvider><BrowserRouter>
         <Suspense fallback={<Loading />}>
           <Routes>
             <Route element={<Layout />}>
@@ -49,7 +54,7 @@ export default function App() {
             </Route>
           </Routes>
         </Suspense>
-      </BrowserRouter></AuthProvider></I18nProvider>
+      </BrowserRouter></ProfileLanguageProvider></AuthProvider></I18nProvider>
     </ErrorBoundary>
   );
 }

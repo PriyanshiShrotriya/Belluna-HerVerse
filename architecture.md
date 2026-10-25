@@ -175,18 +175,45 @@ create table public.ai_usage (
 );
 alter table public.ai_usage enable row level security;
 
-create or replace function public.consume_ai_quota(p_limit int)
-returns boolean language plpgsql security definer set search_path = public as $$
-declare c int;
+-- No row is seeded: configure the approved positive limit as the database owner
+-- before enabling AI requests. Clients cannot read or modify this table.
+create table public.ai_quota_config (
+  id smallint primary key check (id = 1),
+  daily_limit int not null check (daily_limit > 0)
+);
+alter table public.ai_quota_config enable row level security;
+revoke all on table public.ai_quota_config from public, anon, authenticated;
+revoke all on table public.ai_quota_config from service_role;
+
+-- Fresh-install cleanup for databases that already have the earlier signature.
+-- Deployed databases must receive this change in a new migration instead.
+drop function if exists public.consume_ai_quota(int);
+
+create or replace function public.consume_ai_quota()
+returns boolean language plpgsql security definer set search_path = '' as $$
+declare
+  c int;
+  configured_limit int;
+  current_user_id uuid := (select auth.uid());
 begin
-  if auth.uid() is null then return false; end if;
+  if current_user_id is null then return false; end if;
+
+  select daily_limit into configured_limit
+  from public.ai_quota_config
+  where id = 1;
+
+  if not found or configured_limit is null or configured_limit <= 0 then
+    return false;
+  end if;
+
   insert into public.ai_usage (user_id, usage_date, count)
-  values (auth.uid(), current_date, 1)
+  values (current_user_id, current_date, 1)
   on conflict (user_id, usage_date) do update set count = public.ai_usage.count + 1
   returning count into c;
-  return c <= p_limit;
+  return c <= configured_limit;
 end $$;
-grant execute on function public.consume_ai_quota(int) to authenticated;
+revoke all on function public.consume_ai_quota() from public, anon, authenticated;
+grant execute on function public.consume_ai_quota() to authenticated;
 
 -- Chat
 create table public.chat_rooms (
@@ -197,13 +224,50 @@ create table public.chat_rooms (
   is_active boolean not null default true
 );
 alter table public.chat_rooms enable row level security;
-create policy "rooms read" on public.chat_rooms for select to authenticated using (is_active);
+create policy "rooms read" on public.chat_rooms for select to authenticated
+  using (
+    is_active
+    and (
+      exists (
+        select 1 from public.profiles p
+        where p.id = (select auth.uid()) and p.adult_confirmed
+      )
+      or (select public.is_moderator())
+    )
+  );
+
+create table public.chat_blocks (
+  blocker_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  blocked_handle text not null,
+  primary key (blocker_id, blocked_handle)
+);
+alter table public.chat_blocks enable row level security;
+create policy "blocks own" on public.chat_blocks for all to authenticated
+  using (
+    blocker_id = (select auth.uid())
+    and exists (
+      select 1 from public.profiles p
+      where p.id = (select auth.uid()) and p.adult_confirmed
+    )
+  )
+  with check (
+    blocker_id = (select auth.uid())
+    and exists (
+      select 1 from public.profiles p
+      where p.id = (select auth.uid()) and p.adult_confirmed
+    )
+  );
 
 create table public.chat_messages (
   id uuid primary key default gen_random_uuid(),
   room_id uuid not null references public.chat_rooms(id) on delete cascade,
   author_handle text not null default '',
-  body text not null check (char_length(body) between 1 and 500),
+  body text not null check (
+    char_length(body) between 1 and 500
+    and body !~* '(^|[^[:alnum:]])https?://[^[:space:]]+'
+    and body !~* '(^|[^[:alnum:]])www[.][^[:space:]]+'
+    and body !~* '(^|[^[:alnum:]_@/])([[:alnum:]]([[:alnum:]-]{0,61}[[:alnum:]])?[.])+[[:alpha:]]{2,}(:[0-9]{1,5})?([/?#][^[:space:]]*)?($|[^[:alnum:]_-])'
+  ),
   hidden boolean not null default false,
   created_at timestamptz not null default now()
 );
@@ -211,9 +275,29 @@ create index on public.chat_messages (room_id, created_at desc);
 alter table public.chat_messages enable row level security;
 
 create policy "messages read" on public.chat_messages for select to authenticated
-  using (hidden = false or public.is_moderator());
+  using (
+    (
+      (select public.is_moderator())
+      or (
+        exists (
+          select 1 from public.profiles p
+          where p.id = (select auth.uid()) and p.adult_confirmed
+        )
+        and not hidden
+      )
+    )
+    and (
+      (select public.is_moderator())
+      or not exists (
+        select 1
+        from public.chat_blocks b
+        where b.blocker_id = (select auth.uid())
+          and b.blocked_handle = chat_messages.author_handle
+      )
+    )
+  );
 create policy "messages insert adult" on public.chat_messages for insert to authenticated
-  with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.adult_confirmed));
+  with check (exists (select 1 from public.profiles p where p.id = (select auth.uid()) and p.adult_confirmed));
 
 -- Sets the handle server-side (cannot be spoofed) and rate-limits
 create or replace function public.chat_before_insert()
@@ -240,9 +324,25 @@ create table public.chat_reports (
   unique (message_id, reporter_id)
 );
 alter table public.chat_reports enable row level security;
-create policy "reports insert" on public.chat_reports for insert to authenticated with check (reporter_id = auth.uid());
+create policy "reports insert" on public.chat_reports for insert to authenticated
+  with check (
+    reporter_id = (select auth.uid())
+    and exists (
+      select 1 from public.profiles p
+      where p.id = (select auth.uid()) and p.adult_confirmed
+    )
+  );
 create policy "reports read own or mod" on public.chat_reports for select to authenticated
-  using (reporter_id = auth.uid() or public.is_moderator());
+  using (
+    (select public.is_moderator())
+    or (
+      reporter_id = (select auth.uid())
+      and exists (
+        select 1 from public.profiles p
+        where p.id = (select auth.uid()) and p.adult_confirmed
+      )
+    )
+  );
 
 create or replace function public.chat_after_report()
 returns trigger language plpgsql security definer set search_path = public as $$
@@ -253,23 +353,45 @@ begin
   return new;
 end $$;
 create trigger chat_reports_after_insert after insert on public.chat_reports
-  for each row execute function public.chat_after_report();
+for each row execute function public.chat_after_report();
 
-create table public.chat_blocks (
-  blocker_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
-  blocked_handle text not null,
-  primary key (blocker_id, blocked_handle)
-);
-alter table public.chat_blocks enable row level security;
-create policy "blocks own" on public.chat_blocks for all to authenticated
-  using (blocker_id = auth.uid()) with check (blocker_id = auth.uid());
+do $$
+begin
+if not exists (
+  select 1
+  from pg_catalog.pg_publication
+  where pubname = 'supabase_realtime'
+) then
+  raise exception
+    'Supabase Realtime publication supabase_realtime is missing; enable Realtime for chat_messages and rerun this migration';
+end if;
+
+if not exists (
+  select 1
+  from pg_catalog.pg_publication_tables
+  where pubname = 'supabase_realtime'
+    and schemaname = 'public'
+    and tablename = 'chat_messages'
+) then
+  execute 'alter publication supabase_realtime add table public.chat_messages';
+end if;
+end;
+$$;
+
 ```
 
 **Notes**
-- Enable Realtime on `chat_messages` only. Postgres-changes subscriptions respect RLS; test with two accounts. Delete events are not filtered by RLS, so deletions are handled as hide-by-update.
+- Chat message inserts reject HTTP/HTTPS URLs (`http://` or `https://`), `www.`-prefixed names, and bare domain-like names with one or more DNS-style labels and an alphabetic top-level label of at least two characters. These checks are case-insensitive and allow a numeric port and path/query/fragment after the domain. They do not reject email addresses or domain-like text embedded directly after `/`, `_`, or `@`; this is a deliberately scoped textual pattern, not full URL parsing.
+- Chat room and message reads, message posting, reporting, and blocking require the user's `adult_confirmed` profile flag; moderators may read rooms, hidden messages, and reports for CH-7 moderation without self-confirming as chat users. This flag is the documented self-confirmation, not independent age verification.
+- `ai_quota_config` has no client grants or policies. A database owner/admin configures its positive `daily_limit` row before enabling AI requests; no default value is seeded. `consume_ai_quota()` accepts no limit argument and fails closed without a valid row.
+- The AI backend must call `consume_ai_quota()` as the authenticated user and must not call the provider if the result is `false` or if the RPC errors. This repository currently has no AI backend implementation; this check remains required before enabling AI requests. `service_role` cannot configure `ai_quota_config`; use the Supabase SQL Editor as the database owner/admin.
+- `0001_init.sql` drops the legacy `consume_ai_quota(int)` overload for fresh installations. If an earlier migration has already been applied, add this function replacement and cleanup in a new migration; do not edit or reapply an applied migration.
+- The migration checks whether Supabase's `supabase_realtime` publication exists and whether `public.chat_messages` is already a member before adding it. It fails with an explicit instruction if the publication is absent; enable Realtime for this table in Supabase before running the migration. Postgres-changes subscriptions respect RLS; test with two accounts. Delete events are not filtered by RLS, so deletions are handled as hide-by-update.
 - Anonymous sign-ins (Supabase) can feed the chat, but anonymous users cannot track data across devices; decide in Phase 1.
 - Schedule cleanup of old chat messages (for example `pg_cron`, or a manual script before the demo).
-- `symptom_catalog` is seeded from `content/symptoms.json`. `supabase/seed.sql` contains **synthetic** demo data only.
+- `supabase/seed.sql` currently inserts a bilingual static symptom catalogue. `content/symptoms.json` is not present in the repository; no personal symptom or cycle records are seeded.
+- `supabase/migrations/0002_unique_cycle_start_dates.sql` adds a per-user unique cycle start date index to prevent duplicate period starts. It aborts if duplicates already exist and does not delete data; inspect and resolve such rows before applying it.
+- The tracker UI currently supports cycle start/end dates and notes, and symptom date/severity. The existing `symptom_entries` table has no time or notes columns, so those fields are not captured.
 - Account deletion needs a server-side step (admin API); start with an RPC that deletes the user's tracker rows and profile data.
 
 ### RLS summary
@@ -280,14 +402,20 @@ create policy "blocks own" on public.chat_blocks for all to authenticated
 | `cycle_entries`, `daily_logs`, `symptom_entries` | Owner | Owner |
 | `symptom_catalog` | Any signed-in user | Nobody (seed/migration) |
 | `ai_usage` | Nobody | Via `consume_ai_quota` only |
-| `chat_rooms` | Signed-in users | Nobody (seed/migration) |
-| `chat_messages` | Signed-in users (hidden excluded unless moderator) | 18+ confirmed users, handle forced server-side |
-| `chat_reports` | Reporter or moderator | Reporter |
-| `chat_blocks` | Owner | Owner |
+| `ai_quota_config` | Database owner/admin only | Database owner/admin only |
+| `chat_rooms` | Adult-confirmed signed-in users or moderator | Nobody (seed/migration) |
+| `chat_messages` | Adult-confirmed signed-in users (hidden and blocked authors excluded) or moderator | Adult-confirmed users, handle forced server-side |
+| `chat_reports` | Adult-confirmed reporter or moderator | Adult-confirmed reporter |
+| `chat_blocks` | Adult-confirmed owner | Adult-confirmed owner |
 
 ## 5. Shared TypeScript interfaces (Member 2 publishes; others consume)
 
-Implemented in `src/lib/db/`. Types come from generated `database.ts`.
+Tracker contracts currently live in `belluna/src/lib/db/tracker.ts`. Until
+types are generated from the connected Supabase project, these are domain
+types. Each client repository receives the expected user ID from the current
+auth context and verifies it against `supabase.auth.getUser()` before and after
+operations; the verified session ID, not arbitrary client input, is used in
+database filters and payloads.
 
 ```ts
 export type DateRange = { from: string; to: string }; // ISO dates
@@ -299,21 +427,22 @@ export interface ProfileRepo {
 }
 
 export interface CycleRepo {
-  list(range?: DateRange): Promise<CycleEntry[]>;
-  create(input: NewCycleEntry): Promise<CycleEntry>;
-  update(id: string, patch: Partial<NewCycleEntry>): Promise<CycleEntry>;
-  remove(id: string): Promise<void>;
+  list(userId: string, range?: DateRange): Promise<CycleEntry[]>;
+  save(userId: string, input: NewCycleEntry): Promise<CycleEntry>;
+  remove(userId: string, id: string): Promise<void>;
 }
 
 export interface DailyLogRepo {
-  upsert(input: NewDailyLog): Promise<DailyLog>;
-  list(range: DateRange): Promise<DailyLog[]>;
+  list(userId: string, range?: DateRange): Promise<Record<string, HealthLog>>;
+  save(userId: string, date: string, log: HealthLog): Promise<void>;
+  remove(userId: string, date: string): Promise<void>;
 }
 
 export interface SymptomRepo {
-  catalog(): Promise<SymptomDef[]>;
-  setForDay(date: string, items: { code: string; severity: 1|2|3|4|5 }[]): Promise<void>;
-  list(range: DateRange): Promise<SymptomEntry[]>;
+  catalog(userId: string): Promise<SymptomDefinition[]>;
+  list(userId: string, range?: DateRange): Promise<SymptomEntry[]>;
+  upsert(userId: string, input: Omit<SymptomEntry, 'id'>): Promise<void>;
+  remove(userId: string, id: string): Promise<void>;
 }
 
 export interface TimelineRepo {
@@ -334,7 +463,7 @@ export interface ChatRepo {
 }
 ```
 
-Zod schemas for `NewCycleEntry`, `NewDailyLog` and symptom input live next to the repositories and are reused by React Hook Form.
+Zod schemas for cycle, daily-log and symptom inputs live in the tracker data/validation modules and are used by repository validation. The current tracker forms use controlled React state; integrating the schemas with React Hook Form remains optional follow-up work.
 
 **Translator ↔ tracker contract (P2):** `TimelineRepo.getCycleStats()` can feed an opt-in context object to the translator; the proxy never receives raw entries.
 
@@ -372,7 +501,8 @@ The **model returns `source_ids`**, not URLs. The server maps IDs to the allowli
 ### 6.2 Pipeline
 
 ```
-validate input (Zod) ─► verify JWT ─► consume_ai_quota RPC
+validate input (Zod) ─► verify JWT ─► consume_ai_quota()
+   ─► false / RPC error / missing config ─► error or rate-limited response; stop (no LLM)
    ─► pre-screen rules ─┬─ emergency / self-harm ─► static emergency response (no LLM)
                         ├─ dosing / diagnosis / prescription ─► safe refusal
                         └─ out of scope ─► polite redirect
@@ -421,7 +551,7 @@ interface LlmProvider {
 Implementations: `groqProvider` (default; OpenAI-compatible chat completions endpoint, JSON mode if the chosen model supports it) and `geminiProvider` (optional). Verify the current model list and limits before choosing `GROQ_MODEL`.
 
 ### 6.6 Abuse and cost controls
-Per-user daily quota via `consume_ai_quota`; input length cap; no query logging; optional pre-generated answers for demo questions to survive rate limits.
+Per-user daily quota via `consume_ai_quota()`; its configured limit is stored in `ai_quota_config`, must be set by the database owner before AI requests are enabled, and is never supplied by the caller. The backend must stop on `false`, RPC errors, or missing configuration and must not call the provider. No backend implementation currently exists in this repository; this is required work before AI requests are enabled. Input length cap; no query logging; optional pre-generated answers for demo questions to survive rate limits.
 
 ## 7. Period SOS design
 
@@ -487,7 +617,7 @@ Per-user daily quota via `consume_ai_quota`; input length cap; no query logging;
 | Symptom frequency | `symptom_entries` grouped by code | Recharts bar |
 | Timeline | Merged events | List component |
 
-**Cycle stats** (TK-7): average and variability of recent cycle lengths; label the result as an estimate. Irregularity thresholds must come from a cited clinical source before use.
+**Cycle stats** (TK-7): display the recorded average and range; estimate the next date from the median of up to the three most recent observed cycle lengths, clearly labelled as an estimate. The median limits the effect of one unusually long or short interval without discarding or changing any records. Irregularity thresholds must come from a cited clinical source before use.
 
 **Pattern insights** (TK-8): hand-written rules in `src/features/tracker/insights.ts`. Each insight returns `{ id, message, triggeredBy: entryIds[], sourceId }`. Wording is non-diagnostic: "worth discussing with a doctor".
 

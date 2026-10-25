@@ -1,28 +1,40 @@
-import { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Droplets, Zap, Smile, Save, CalendarHeart, BarChart2 } from 'lucide-react';
+import { lazy, Suspense, useState, useEffect, useRef } from 'react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Droplets,
+  Zap,
+  Smile,
+  Save,
+  CalendarHeart,
+  BarChart2,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { getDailyLogs, saveDailyLog } from './dailyLogsService';
+import { useAuth } from '../../app/stubs/auth';
+import { loadTrackerLogs, saveTrackerLogs } from './trackerStorage';
 import { useT } from '../../i18n/t';
+
+const HealthHistory = lazy(() => import('./HealthHistory'));
 
 type Log = { flow: number; pain: number; mood: number; notes: string };
 type Logs = Record<string, Log>;
 
-const MOODS = ['😢', '😕', '😐', '🙂', '😄'];
+const MOODS = ['😢', '😕', '😐', '🙂', '😄', '😣'];
+const MOOD_LABEL_KEYS = [
+  'tracker.mood.low',
+  'tracker.mood.anxious',
+  'tracker.mood.okay',
+  'tracker.mood.good',
+  'tracker.mood.great',
+  'tracker.mood.irritable',
+] as const;
 
 function toKey(y: number, m: number, d: number) {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 function getDays(year: number, month: number) { return new Date(year, month + 1, 0).getDate(); }
 function getFirstDay(year: number, month: number) { return new Date(year, month, 1).getDay(); }
-
-function predictNext(logs: Logs): number | null {
-  const periodDays = Object.entries(logs).filter(([, v]) => v.flow > 0).map(([k]) => new Date(k).getTime()).sort((a, b) => a - b);
-  if (periodDays.length < 2) return null;
-  const gaps: number[] = [];
-  for (let i = 1; i < periodDays.length; i++) { const g = (periodDays[i] - periodDays[i - 1]) / 86400000; if (g > 2 && g < 50) gaps.push(g); }
-  if (!gaps.length) return null;
-  const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length;
-  return Math.round((new Date(periodDays[periodDays.length - 1] + avg * 86400000).getTime() - Date.now()) / 86400000);
-}
 
 const MONTH_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_HI = ['जनवरी', 'फ़रवरी', 'मार्च', 'अप्रैल', 'मई', 'जून', 'जुलाई', 'अगस्त', 'सितंबर', 'अक्तूबर', 'नवंबर', 'दिसंबर'];
@@ -56,14 +68,14 @@ function MoodChart({ data, label }: { data: { date: string; val: number }[]; lab
   const last = data.slice(-20);
   if (!last.length) return null;
   const w = 100 / last.length;
-  const points = last.map((d, i) => `${(i * w + w / 2).toFixed(1)},${((4 - d.val) / 4) * 80 + 10}`).join(' ');
+  const points = last.map((d, i) => `${(i * w + w / 2).toFixed(1)},${((5 - d.val) / 5) * 80 + 10}`).join(' ');
   return (
     <div>
       <p className="text-xs font-semibold text-ink/60 mb-2 uppercase tracking-wide">{label}</p>
       <svg viewBox="0 0 100 100" className="h-14 w-full" preserveAspectRatio="none">
         <polyline fill="none" stroke="#A78BFA" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" points={points} />
         {last.map((d, i) => (
-          <circle key={i} cx={(i * w + w / 2).toFixed(1)} cy={((4 - d.val) / 4) * 80 + 10} r="3" fill="#6D3AAE" />
+          <circle key={i} cx={(i * w + w / 2).toFixed(1)} cy={((5 - d.val) / 5) * 80 + 10} r="3" fill="#6D3AAE" />
         ))}
       </svg>
       <div className="flex justify-between text-xs text-ink/40 mt-1">
@@ -74,39 +86,162 @@ function MoodChart({ data, label }: { data: { date: string; val: number }[]; lab
 }
 
 export default function PeriodTracker() {
+  const { session } = useAuth();
+  const userId = session?.userId ?? null;
+  const activeUserId = useRef(userId);
+  activeUserId.current = userId;
   const { t, lang } = useT();
+  const localCacheWarning = t('tracker.localCacheWarning');
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [selected, setSelected] = useState<string | null>(null);
-  const [logs, setLogs] = useState<Logs>(() => {
-    try { return JSON.parse(localStorage.getItem('belluna.tracker') || '{}'); } catch { return {}; }
-  });
+  const [logs, setLogs] = useState<Logs>({});
+  const [loadedUserId, setLoadedUserId] = useState<string | null>(null);
   const [form, setForm] = useState<Log>({ flow: 0, pain: 0, mood: 2, notes: '' });
   const [saved, setSaved] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const [showCharts, setShowCharts] = useState(false);
 
-  useEffect(() => { localStorage.setItem('belluna.tracker', JSON.stringify(logs)); }, [logs]);
+  useEffect(() => {
+    if (!loading && userId && loadedUserId === userId) {
+      try {
+        saveTrackerLogs(userId, logs, window.localStorage);
+      } catch {
+        setError(localCacheWarning);
+      }
+    }
+  }, [logs, loading, userId, loadedUserId, localCacheWarning]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setSelected(null);
+    setForm({ flow: 0, pain: 0, mood: 2, notes: '' });
+    setSaved(false);
+    setError('');
+
+    if (!userId) {
+      setLogs({});
+      setLoadedUserId(null);
+      setLoading(false);
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const authenticatedUserId = userId;
+
+    async function loadLogs() {
+      setLoading(true);
+
+      try {
+        const localLogs = loadTrackerLogs(
+          authenticatedUserId,
+          window.localStorage
+        );
+
+        setLogs(localLogs);
+        setLoadedUserId(authenticatedUserId);
+
+        const cloudLogs = await getDailyLogs(authenticatedUserId);
+
+        if (cancelled) return;
+
+        const mergedLogs: Logs = { ...localLogs, ...cloudLogs };
+        setLogs(mergedLogs);
+
+        for (const [date, log] of Object.entries(localLogs)) {
+          if (!Object.prototype.hasOwnProperty.call(cloudLogs, date)) {
+            try {
+              await saveDailyLog(authenticatedUserId, date, log);
+            } catch {
+              if (!cancelled) {
+                setError(t('tracker.migrationWarning'));
+              }
+            }
+          }
+
+          if (cancelled) return;
+        }
+      } catch {
+        if (!cancelled) {
+          setLoadedUserId(authenticatedUserId);
+          setError(t('tracker.loadError'));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadLogs();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
   useEffect(() => {
     if (selected && logs[selected]) setForm(logs[selected]);
     else setForm({ flow: 0, pain: 0, mood: 2, notes: '' });
     setSaved(false);
   }, [selected]);
 
-  function save() {
-    if (!selected) return;
-    setLogs({ ...logs, [selected]: form });
-    setSaved(true);
-  }
+ 
+async function save() {
+  if (!userId || loadedUserId !== userId || !selected || saving || loading) return;
+  const savingUserId = userId;
 
-  const FLOWS = [t('tracker.flow.none'), t('tracker.flow.light'), t('tracker.flow.medium'), t('tracker.flow.heavy')];
+  setSaving(true);
+  setError('');
+  setSaved(false);
+
+  try {
+    await saveDailyLog(savingUserId, selected, form);
+    if (activeUserId.current !== savingUserId) return;
+
+    setLogs((previous) => ({
+      ...previous,
+      [selected]: { ...form },
+    }));
+
+    setSaved(true);
+  } catch {
+    if (activeUserId.current === savingUserId) {
+      setError(t('tracker.saveError'));
+    }
+  } finally {
+    setSaving(false);
+  }
+}
+
+
+  const FLOWS = [t('tracker.flow.none'), t('tracker.flow.light'), t('tracker.flow.medium'), t('tracker.flow.heavy'), t('tracker.flow.veryHeavy')];
   const PAINS = [t('tracker.pain.none'), t('tracker.pain.mild'), t('tracker.pain.moderate'), t('tracker.pain.severe')];
   const MONTHS = lang === 'hi' ? MONTH_HI : MONTH_EN;
   const DAYS = lang === 'hi' ? DAY_HI : DAY_EN;
 
   const days = getDays(year, month);
   const firstDay = getFirstDay(year, month);
-  const nextIn = predictNext(logs);
+  if (!userId) {
+    return (
+      <p role="status" className="mx-auto max-w-5xl px-4 py-8 text-ink/70">
+        Sign in to view your health logs.
+      </p>
+    );
+  }
+
+  if (loading || loadedUserId !== userId) {
+    return (
+      <p role="status" className="mx-auto max-w-5xl px-4 py-8 text-ink/70">
+        Loading your health logs…
+      </p>
+    );
+  }
 
   const prev = () => { if (month === 0) { setYear(year - 1); setMonth(11); } else setMonth(month - 1); };
   const next = () => { if (month === 11) { setYear(year + 1); setMonth(0); } else setMonth(month + 1); };
@@ -122,18 +257,10 @@ export default function PeriodTracker() {
 
   // Chart data — all logged days sorted ascending
   const allEntries = Object.entries(logs).sort(([a], [b]) => a.localeCompare(b));
-  const flowData = allEntries.filter(([, v]) => v.flow > 0 || v.pain > 0).map(([k, v]) => ({ date: k, val: v.flow }));
-  const painData = allEntries.filter(([, v]) => v.flow > 0 || v.pain > 0).map(([k, v]) => ({ date: k, val: v.pain }));
-  const moodData = allEntries.filter(([, v]) => v.flow > 0 || v.pain > 0).map(([k, v]) => ({ date: k, val: v.mood }));
+  const flowData = allEntries.map(([k, v]) => ({ date: k, val: v.flow }));
+  const painData = allEntries.map(([k, v]) => ({ date: k, val: v.pain }));
+  const moodData = allEntries.map(([k, v]) => ({ date: k, val: v.mood }));
   const hasData = allEntries.length > 0;
-
-  const avgCycle = (() => {
-    const pd = allEntries.filter(([, v]) => v.flow > 0).map(([k]) => new Date(k).getTime()).sort((a, b) => a - b);
-    if (pd.length < 2) return '—';
-    const gs = []; for (let i = 1; i < pd.length; i++) { const g = (pd[i] - pd[i - 1]) / 86400000; if (g > 2 && g < 50) gs.push(g); }
-    if (!gs.length) return '—';
-    return `${Math.round(gs.reduce((a, b) => a + b) / gs.length)} ${lang === 'hi' ? 'दिन' : 'days'}`;
-  })();
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
@@ -149,24 +276,30 @@ export default function PeriodTracker() {
         </button>
       </div>
       <p className="text-ink/70 mb-6 text-sm">
-        {lang === 'hi' ? 'तारीख टैप करके दर्ज करें। डेटा सिर्फ़ इस डिवाइस पर रहता है।' : 'Tap a date to log how you feel. Data stays only on this device.'}
+        {lang === 'hi'
+          ? 'तारीख टैप करके अपने लक्षण दर्ज करें। आपकी प्रविष्टियाँ आपके खाते से जुड़ी हैं।'
+          : 'Tap a date to log your symptoms and track your cycle. Your logs are linked to your signed-in account.'}
       </p>
 
+      {loading && (
+        <p role="status" className="mb-4 text-sm text-ink/60">
+          {lang === 'hi'
+            ? 'आपकी स्वास्थ्य प्रविष्टियाँ लोड हो रही हैं…'
+            : 'Loading your health logs…'}
+        </p>
+      )}
+
+      {error && (
+        <p role="alert" className="mb-4 text-sm text-red-700">
+          {error}
+        </p>
+      )}
+
       {/* Stats strip */}
-      <div className="grid gap-4 sm:grid-cols-3 mb-6">
-        <div className="card bg-gradient-to-br from-purple-50 to-lavender/20">
-          <p className="text-xs text-ink/60 mb-1">{t('dash.next')}</p>
-          <p className="text-2xl font-bold text-primary">
-            {nextIn === null ? '—' : nextIn <= 0 ? (lang === 'hi' ? 'आज / अपेक्षित' : 'Today / Due') : (lang === 'hi' ? `${nextIn} दिन में` : `in ${nextIn} days`)}
-          </p>
-        </div>
+      <div className="mb-6 max-w-xs">
         <div className="card">
           <p className="text-xs text-ink/60 mb-1">{lang === 'hi' ? 'दर्ज किए दिन' : 'Days logged'}</p>
           <p className="text-2xl font-bold text-primary">{Object.keys(logs).filter(k => logs[k].flow > 0).length}</p>
-        </div>
-        <div className="card">
-          <p className="text-xs text-ink/60 mb-1">{lang === 'hi' ? 'औसत चक्र' : 'Average cycle'}</p>
-          <p className="text-2xl font-bold text-primary">{avgCycle}</p>
         </div>
       </div>
 
@@ -182,8 +315,8 @@ export default function PeriodTracker() {
             </div>
           ) : (
             <div className="grid gap-6 sm:grid-cols-3">
-              <BarChart data={flowData} label={t('tracker.chart.flow')} color="#B42318" maxVal={3} />
-              <BarChart data={painData} label={t('tracker.chart.pain')} color="#F97316" maxVal={3} />
+              <BarChart data={flowData} label={t('tracker.chart.flow')} color="#B42318" maxVal={4} />
+              <BarChart data={painData} label={t('tracker.chart.pain')} color="#F97316" maxVal={10} />
               <MoodChart data={moodData} label={t('tracker.chart.mood')} />
             </div>
           )}
@@ -246,7 +379,7 @@ export default function PeriodTracker() {
               {/* Flow */}
               <div className="mb-4">
                 <label className="flex items-center gap-2 text-sm font-medium mb-2"><Droplets size={16} className="text-primary" />{lang === 'hi' ? 'फ़्लो' : 'Flow'}</label>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                   {FLOWS.map((f, i) => (
                     <button key={f} onClick={() => setForm({ ...form, flow: i })}
                       className={`rounded-xl py-2 text-sm font-medium transition-all ${form.flow === i ? 'bg-primary text-white' : 'bg-soft hover:bg-lavender/30'}`}>
@@ -258,13 +391,12 @@ export default function PeriodTracker() {
               {/* Pain */}
               <div className="mb-4">
                 <label className="flex items-center gap-2 text-sm font-medium mb-2"><Zap size={16} className="text-primary" />{lang === 'hi' ? 'दर्द का स्तर' : 'Pain level'}</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {PAINS.map((p, i) => (
-                    <button key={p} onClick={() => setForm({ ...form, pain: i })}
-                      className={`rounded-xl py-2 text-sm font-medium transition-all ${form.pain === i ? 'bg-orange-500 text-white' : 'bg-soft hover:bg-orange-100'}`}>
-                      {p}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-ink/60">{PAINS[0]}</span>
+                  <input type="range" min="0" max="10" step="1" value={form.pain}
+                    onChange={(event) => setForm({ ...form, pain: Number(event.target.value) })}
+                    className="w-full accent-orange-500" aria-label={lang === 'hi' ? 'दर्द का स्तर 0 से 10' : 'Pain level from 0 to 10'} />
+                  <span className="min-w-8 text-right text-sm font-medium">{form.pain}/10</span>
                 </div>
               </div>
               {/* Mood */}
@@ -272,7 +404,8 @@ export default function PeriodTracker() {
                 <label className="flex items-center gap-2 text-sm font-medium mb-2"><Smile size={16} className="text-primary" />{lang === 'hi' ? 'मूड' : 'Mood'}</label>
                 <div className="flex gap-3">
                   {MOODS.map((m, i) => (
-                    <button key={i} onClick={() => setForm({ ...form, mood: i })}
+                    <button key={i} type="button" aria-label={t(MOOD_LABEL_KEYS[i])}
+                      aria-pressed={form.mood === i} onClick={() => setForm({ ...form, mood: i })}
                       className={`text-2xl rounded-xl p-2 transition-all ${form.mood === i ? 'bg-primary/10 ring-2 ring-primary scale-110' : 'hover:bg-soft'}`}>
                       {m}
                     </button>
@@ -286,13 +419,33 @@ export default function PeriodTracker() {
                   placeholder={lang === 'hi' ? 'आप कैसा महसूस कर रही हैं?' : 'How are you feeling?'}
                   className="input py-2 resize-none" maxLength={200} />
               </div>
-              <button onClick={save} className="btn-primary w-full">
-                <Save size={16} />{saved ? (lang === 'hi' ? '✓ सेव हो गया!' : '✓ Saved!') : (lang === 'hi' ? 'सेव करें' : 'Save log')}
+              <button
+                onClick={() => void save()}
+                disabled={loading || saving}
+                className="btn-primary w-full disabled:opacity-60"
+              >
+                <Save size={16} />
+                {saving
+                  ? (lang === 'hi' ? 'सेव हो रहा है…' : 'Saving…')
+                  : saved
+                    ? (lang === 'hi' ? '✓ सेव हो गया!' : '✓ Saved!')
+                    : (lang === 'hi' ? 'सेव करें' : 'Save log')}
               </button>
             </>
           )}
         </div>
       </div>
+      <Suspense fallback={<p role="status" className="text-sm text-ink/60">{t('tracker.loadingHistory')}</p>}>
+        <HealthHistory
+          userId={userId}
+          dailyLogs={allEntries.map(([date, log]) => ({
+            date,
+            flow: log.flow,
+            pain: log.pain,
+            mood: MOODS[log.mood],
+          }))}
+        />
+      </Suspense>
     </div>
   );
 }
