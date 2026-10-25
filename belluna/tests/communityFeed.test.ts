@@ -58,6 +58,20 @@ const rooms: ChatRoom[] = [
     titleHi: 'प्रजनन स्वास्थ्य',
     isActive: true,
   },
+  {
+    id: 'room-nutrition-uuid',
+    slug: 'nutrition',
+    titleEn: 'Nutrition',
+    titleHi: 'पोषण',
+    isActive: true,
+  },
+  {
+    id: 'room-general-uuid',
+    slug: 'general',
+    titleEn: 'General',
+    titleHi: 'सामान्य',
+    isActive: true,
+  },
 ];
 
 const message: ChatMessage = {
@@ -114,8 +128,8 @@ describe('community feed persistence mapping', () => {
     expect(roomForCommunityTopic('PCOS', rooms)?.id).toBe('room-pcos-uuid');
     expect(roomForCommunityTopic('Period Health', rooms)?.id).toBe('room-period-uuid');
     expect(roomForCommunityTopic('Mental Health', rooms)?.id).toBe('room-mental-uuid');
-    expect(roomForCommunityTopic('Nutrition', rooms)).toBeUndefined();
-    expect(roomForCommunityTopic('General', rooms)).toBeUndefined();
+    expect(roomForCommunityTopic('Nutrition', rooms)?.id).toBe('room-nutrition-uuid');
+    expect(roomForCommunityTopic('General', rooms)?.id).toBe('room-general-uuid');
     expect(isCommunityTopic('All')).toBe(false);
     expect(isCommunityTopic('General')).toBe(true);
   });
@@ -157,9 +171,26 @@ describe('community feed persistence mapping', () => {
     });
   });
 
-  it('keeps unsupported topic submissions and failed saves rejected', async () => {
-    await expect(createCommunityPost('General', message.body, rooms))
-      .rejects.toThrow('Posts for "General" are not supported');
+  it('posts Nutrition and General to their matching database rooms', async () => {
+    mocks.sendMessage.mockImplementation(async (roomId: string, body: string) => ({
+      ...message,
+      id: `message-${roomId}`,
+      roomId,
+      body,
+    }));
+
+    const nutritionPost = await createCommunityPost('Nutrition', 'Nutrition topic', rooms);
+    const generalPost = await createCommunityPost('General', 'General topic', rooms);
+
+    expect(mocks.sendMessage).toHaveBeenNthCalledWith(1, 'room-nutrition-uuid', 'Nutrition topic');
+    expect(mocks.sendMessage).toHaveBeenNthCalledWith(2, 'room-general-uuid', 'General topic');
+    expect(nutritionPost).toMatchObject({ topic: 'Nutrition', text: 'Nutrition topic', isPersisted: true });
+    expect(generalPost).toMatchObject({ topic: 'General', text: 'General topic', isPersisted: true });
+  });
+
+  it('rejects topics without a corresponding active room and failed saves', async () => {
+    await expect(createCommunityPost('Nutrition', message.body, []))
+      .rejects.toThrow('Posts for "Nutrition" are not supported');
     expect(mocks.sendMessage).not.toHaveBeenCalled();
 
     mocks.sendMessage.mockRejectedValue(new Error('Message could not be sent.'));

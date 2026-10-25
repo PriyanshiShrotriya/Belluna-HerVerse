@@ -31,8 +31,8 @@ export const TOPIC_ROOM_SLUGS: Record<CommunityTopic, string | null> = {
     PCOS: 'pcos',
     'Period Health': 'menstrual-health',
     'Mental Health': 'emotional-wellbeing',
-    Nutrition: null,
-    General: null,
+    Nutrition: 'nutrition',
+    General: 'general',
 };
 
 export function isCommunityTopic(value: string): value is CommunityTopic {
@@ -43,6 +43,8 @@ const ROOM_TOPICS: Record<string, string> = {
     pcos: 'PCOS',
     'menstrual-health': 'Period Health',
     'emotional-wellbeing': 'Mental Health',
+    nutrition: 'Nutrition',
+    general: 'General',
 };
 
 function relativeTime(createdAt: string): string {
