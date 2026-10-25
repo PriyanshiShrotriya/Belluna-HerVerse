@@ -1,36 +1,35 @@
-import { useState } from 'react';
-import { Heart, MessageCircle, Send, Users, ShieldCheck, PlusCircle, Pencil, Trash2, Check, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Heart, MessageCircle, Send, Users, ShieldCheck, PlusCircle, Pencil, Trash2, Check, X, Flag } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useT } from '../../i18n/t';
-
-type Comment = { id: string; author: string; text: string; time: string };
-type Post = {
-    id: string; author: string; avatar: string; text: string; time: string;
-    topic: string; likes: number; liked: boolean; comments: Comment[]; showComments: boolean;
-    isOwn?: boolean;
-};
+import { chatService } from './chatService';
+import type {
+    ChatRoom,
+    CommunityReportReason,
+    HiddenCommunityContent,
+    ModerationReport,
+} from './chatService';
+import {
+    createCommunityPost,
+    isCommunityTopic,
+    loadCommunityFeed,
+    mergePersistedPosts,
+    roomForCommunityTopic,
+    type CommunityFeedPost as Post,
+    type CommunityTopic,
+} from './communityFeed';
 
 const ADJECTIVES = ['Purple', 'Silver', 'Golden', 'Quiet', 'Brave', 'Gentle', 'Cosmic', 'Bright', 'Calm', 'Wise', 'Soft', 'Strong', 'Kind', 'Free', 'Bold'];
 const NOUNS = ['Moon', 'River', 'Star', 'Bloom', 'Wave', 'Light', 'Rose', 'Bird', 'Cloud', 'Storm', 'Leaf', 'Pearl', 'Flame', 'Dream', 'Voice'];
 const AVATARS = ['🌷', '🌙', '⭐', '🌸', '🦋', '🌊', '🌺', '🍃', '✨', '🌻', '💜', '🌹', '🕊️', '🌈', '🫧'];
-const TOPICS = ['All', 'PCOS', 'Period Health', 'Mental Health', 'Nutrition', 'General'];
+const TOPICS = ['All', 'PCOS', 'Period Health', 'Mental Health', 'Nutrition', 'General'] as const;
 
 function randName() { return ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)] + NOUNS[Math.floor(Math.random() * NOUNS.length)]; }
 function randAvatar() { return AVATARS[Math.floor(Math.random() * AVATARS.length)]; }
-function timeAgo(ms: number) {
-    const diff = Date.now() - ms;
-    if (diff < 60000) return 'just now';
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-    return `${Math.floor(diff / 86400000)}d ago`;
-}
 
-const SEED_POSTS: Post[] = [
-    { id: 's1', author: 'PurpleMoon', avatar: '🌙', text: 'Finally got diagnosed with PCOS after 3 years of irregular periods. Feeling so relieved to have answers. Has anyone else gone through this? Would love to connect 💜', time: timeAgo(Date.now() - 2 * 3600000), topic: 'PCOS', likes: 14, liked: false, comments: [{ id: 'c1', author: 'BraveLeaf', text: 'Yes! Same experience here. The diagnosis was a huge relief for me too. You are not alone 💪', time: '1h ago' }, { id: 'c2', author: 'QuietRiver', text: 'Welcome to the PCOS club 😄 What treatment did they suggest?', time: '45m ago' }], showComments: false },
-    { id: 's2', author: 'CalmBloom', avatar: '🌸', text: 'Quick tip that helped me: heating pad + ibuprofen taken 2 hours BEFORE cramps usually start. Changed my life during periods. Hope this helps someone 🌸', time: timeAgo(Date.now() - 5 * 3600000), topic: 'Period Health', likes: 31, liked: false, comments: [{ id: 'c3', author: 'GentleWave', text: 'YES the timing makes all the difference! I take mine the night before my period starts.', time: '3h ago' }], showComments: false },
-    { id: 's3', author: 'BraveVoice', avatar: '🦋', text: 'Does anyone else feel like their anxiety gets so much worse the week before their period? I\'ve been tracking and it\'s very consistent. Apparently it\'s called PMDD. Learning about it now.', time: timeAgo(Date.now() - 10 * 3600000), topic: 'Mental Health', likes: 22, liked: false, comments: [], showComments: false },
-    { id: 's4', author: 'GoldenStar', avatar: '⭐', text: 'Iron levels went from critically low to normal in 3 months with iron tablets + eating pomegranate and spinach daily. Sharing because no one told me how big a deal low iron is for women. Energy is so much better!', time: timeAgo(Date.now() - 24 * 3600000), topic: 'Nutrition', likes: 45, liked: false, comments: [{ id: 'c4', author: 'SoftRose', text: 'which iron supplement did you take?', time: '20h ago' }], showComments: false },
-];
+function isCommunityReportReason(value: string): value is CommunityReportReason {
+    return ['harassment', 'spam', 'unsafe_advice', 'personal_info', 'other'].includes(value);
+}
 
 // ── Nickname chooser screen ───────────────────────────────────────────────
 function NicknameChooser({ onEnter }: { onEnter: (name: string, avatar: string) => void }) {
@@ -86,13 +85,91 @@ export function Community() {
     const { t } = useT();
     const [myName, setMyName] = useState<string | null>(null);
     const [myAvatar, setMyAvatar] = useState<string>('🌷');
-    const [posts, setPosts] = useState<Post[]>(SEED_POSTS);
+    const [posts, setPosts] = useState<Post[]>([]);
+    const [rooms, setRooms] = useState<ChatRoom[]>([]);
+    const [persistenceLoading, setPersistenceLoading] = useState(true);
+    const [feedError, setFeedError] = useState('');
+    const [engagementError, setEngagementError] = useState('');
+    const [persistenceError, setPersistenceError] = useState('');
+    const [persistenceSuccess, setPersistenceSuccess] = useState('');
+    const [postActionErrors, setPostActionErrors] = useState<Record<string, string>>({});
+    const [likingPostIds, setLikingPostIds] = useState<Set<string>>(new Set());
+    const [submittingCommentIds, setSubmittingCommentIds] = useState<Set<string>>(new Set());
+    const [reportingTarget, setReportingTarget] = useState<{ type: 'post' | 'comment'; id: string } | null>(null);
+    const [reportReason, setReportReason] = useState<CommunityReportReason>('harassment');
+    const [isModerator, setIsModerator] = useState(false);
+    const [moderationLoading, setModerationLoading] = useState(false);
+    const [moderationError, setModerationError] = useState('');
+    const [moderationReports, setModerationReports] = useState<ModerationReport[]>([]);
+    const [hiddenContent, setHiddenContent] = useState<HiddenCommunityContent[]>([]);
+    const [sending, setSending] = useState(false);
+    const sendLock = useRef(false);
+    const likeLocks = useRef(new Set<string>());
+    const commentLocks = useRef(new Set<string>());
+    const reportLocks = useRef(new Set<string>());
+    const moderationLock = useRef(false);
     const [topicFilter, setTopicFilter] = useState('All');
     const [newText, setNewText] = useState('');
-    const [newTopic, setNewTopic] = useState('General');
+    const [newTopic, setNewTopic] = useState<CommunityTopic>('General');
     const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
     const [editId, setEditId] = useState<string | null>(null);
     const [editText, setEditText] = useState('');
+
+    useEffect(() => {
+        let cancelled = false;
+        async function loadPersistedPosts() {
+            setPersistenceLoading(true);
+            setFeedError('');
+            setEngagementError('');
+            try {
+                const loaded = await loadCommunityFeed();
+                if (cancelled) return;
+                setRooms(loaded.rooms);
+                setPosts(loaded.posts);
+                setEngagementError(loaded.engagementError ?? '');
+            } catch (error) {
+                if (!cancelled) {
+                    setFeedError(error instanceof Error ? error.message : 'Could not load community posts.');
+                }
+            } finally {
+                if (!cancelled) setPersistenceLoading(false);
+            }
+        }
+        void loadPersistedPosts();
+        return () => { cancelled = true; };
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        async function loadModeratorInbox() {
+            try {
+                const moderator = await chatService.isModerator();
+                if (cancelled) return;
+                setIsModerator(moderator);
+                if (!moderator) return;
+
+                setModerationLoading(true);
+                const [reports, hiddenItems] = await Promise.all([
+                    chatService.listModerationReports(),
+                    chatService.listHiddenCommunityContent(),
+                ]);
+                if (!cancelled) {
+                    setModerationReports(reports);
+                    setHiddenContent(hiddenItems);
+                }
+            } catch (error) {
+                if (!cancelled) {
+                    setModerationError(error instanceof Error
+                        ? error.message
+                        : 'Could not load moderator access.');
+                }
+            } finally {
+                if (!cancelled) setModerationLoading(false);
+            }
+        }
+        void loadModeratorInbox();
+        return () => { cancelled = true; };
+    }, []);
 
     // If no nickname yet, show the chooser
     if (!myName) {
@@ -101,18 +178,51 @@ export function Community() {
 
     const filtered = topicFilter === 'All' ? posts : posts.filter(p => p.topic === topicFilter);
 
-    function addPost() {
-        if (!newText.trim()) return;
-        const p: Post = {
-            id: Date.now().toString(), author: myName!, avatar: myAvatar,
-            text: newText.trim(), time: 'just now', topic: newTopic,
-            likes: 0, liked: false, comments: [], showComments: false, isOwn: true,
-        };
-        setPosts([p, ...posts]);
-        setNewText('');
+    async function addPost() {
+        const body = newText.trim();
+        if (!body || sendLock.current) return;
+        if (feedError) {
+            setPersistenceError('Community rooms could not be loaded. Reload the page before posting.');
+            return;
+        }
+        const room = roomForCommunityTopic(newTopic, rooms);
+        if (!room) {
+            setPersistenceError(`Posts for "${newTopic}" are not supported by the available community rooms.`);
+            return;
+        }
+        sendLock.current = true;
+        setSending(true);
+        setPersistenceError('');
+        setPersistenceSuccess('');
+        try {
+            const savedPost = await createCommunityPost(newTopic, body, rooms);
+            setPosts((current) => mergePersistedPosts(current, [savedPost]));
+            setNewText('');
+            setPersistenceSuccess('Post saved.');
+            try {
+                const loaded = await loadCommunityFeed();
+                setRooms(loaded.rooms);
+                setPosts(loaded.posts);
+                setFeedError('');
+                setEngagementError(loaded.engagementError ?? '');
+            } catch (error) {
+                setPersistenceError(error instanceof Error
+                    ? `Post saved, but the feed could not be refreshed: ${error.message}`
+                    : 'Post saved, but the feed could not be refreshed.');
+            }
+        } catch (error) {
+            setPersistenceError(error instanceof Error ? error.message : 'Could not save this post.');
+        } finally {
+            sendLock.current = false;
+            setSending(false);
+        }
     }
 
     function deletePost(id: string) {
+        if (posts.find((post) => post.id === id)?.isPersisted) {
+            setPersistenceError('Saved chat messages cannot be deleted with the current database policy.');
+            return;
+        }
         setPosts(posts.filter(p => p.id !== id));
     }
 
@@ -122,25 +232,291 @@ export function Community() {
     }
 
     function saveEdit(id: string) {
+        if (posts.find((post) => post.id === id)?.isPersisted) {
+            setPersistenceError('Saved chat messages cannot be edited with the current database policy.');
+            return;
+        }
         if (!editText.trim()) return;
         setPosts(posts.map(p => p.id === id ? { ...p, text: editText.trim() } : p));
         setEditId(null);
     }
 
-    function toggleLike(id: string) {
-        setPosts(posts.map(p => p.id === id ? { ...p, likes: p.liked ? p.likes - 1 : p.likes + 1, liked: !p.liked } : p));
+    async function toggleLike(id: string) {
+        const post = posts.find((item) => item.id === id);
+        if (!post?.isPersisted) {
+            setPersistenceError('Likes can only be changed on saved community posts.');
+            return;
+        }
+        if (likeLocks.current.has(id)) return;
+        likeLocks.current.add(id);
+        setLikingPostIds((current) => new Set(current).add(id));
+        setPostActionErrors((current) => ({ ...current, [id]: '' }));
+        try {
+            const engagement = post.liked
+                ? await chatService.unlikePost(id)
+                : await chatService.likePost(id);
+            setPosts((current) => current.map((item) => item.id === id
+                ? { ...item, likes: engagement.likeCount, liked: engagement.likedByMe }
+                : item));
+            setPersistenceError('');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Could not update this like.';
+            setPostActionErrors((current) => ({ ...current, [id]: message }));
+            setPersistenceError(message);
+        } finally {
+            likeLocks.current.delete(id);
+            setLikingPostIds((current) => {
+                const next = new Set(current);
+                next.delete(id);
+                return next;
+            });
+        }
     }
 
-    function toggleComments(id: string) {
-        setPosts(posts.map(p => p.id === id ? { ...p, showComments: !p.showComments } : p));
+    async function toggleComments(id: string) {
+        const post = posts.find((item) => item.id === id);
+        if (!post) return;
+        setPostActionErrors((current) => ({ ...current, [id]: '' }));
+        setPosts((current) => current.map((item) => item.id === id
+            ? { ...item, showComments: !item.showComments }
+            : item));
+        if (!post.isPersisted || post.commentsLoaded || post.showComments || commentLocks.current.has(id)) return;
+
+        commentLocks.current.add(id);
+        setPostActionErrors((current) => ({ ...current, [id]: '' }));
+        setPosts((current) => current.map((item) => item.id === id
+            ? { ...item, commentsLoading: true }
+            : item));
+        try {
+            const loadedComments = await chatService.listPostComments(id);
+            setPosts((current) => current.map((item) => item.id === id
+                ? {
+                    ...item,
+                    comments: loadedComments.map((comment) => ({
+                        id: comment.id,
+                        author: comment.author,
+                        text: comment.body,
+                        time: new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' })
+                            .format(new Date(comment.createdAt)),
+                    })),
+                    commentCount: loadedComments.length,
+                    commentsLoaded: true,
+                    commentsLoading: false,
+                }
+                : item));
+            setPersistenceError('');
+        } catch (error) {
+            setPosts((current) => current.map((item) => item.id === id
+                ? { ...item, commentsLoading: false }
+                : item));
+            const message = error instanceof Error ? error.message : 'Could not load comments.';
+            setPostActionErrors((current) => ({ ...current, [id]: message }));
+            setPersistenceError(message);
+        } finally {
+            commentLocks.current.delete(id);
+        }
     }
 
-    function addComment(postId: string) {
+    async function addComment(postId: string) {
+        const post = posts.find((item) => item.id === postId);
+        if (!post?.isPersisted) {
+            const message = 'Comments can only be added to saved community posts.';
+            setPostActionErrors((current) => ({ ...current, [postId]: message }));
+            setPersistenceError(message);
+            return;
+        }
+        if (!post.commentsLoaded) {
+            const message = 'Load this post\'s comments before adding a comment.';
+            setPostActionErrors((current) => ({ ...current, [postId]: message }));
+            setPersistenceError(message);
+            return;
+        }
         const text = commentDrafts[postId]?.trim();
-        if (!text) return;
-        const comment: Comment = { id: Date.now().toString(), author: myName!, text, time: 'just now' };
-        setPosts(posts.map(p => p.id === postId ? { ...p, comments: [...p.comments, comment] } : p));
-        setCommentDrafts({ ...commentDrafts, [postId]: '' });
+        if (!text || commentLocks.current.has(postId)) return;
+        commentLocks.current.add(postId);
+        setSubmittingCommentIds((current) => new Set(current).add(postId));
+        setPostActionErrors((current) => ({ ...current, [postId]: '' }));
+        try {
+            const comment = await chatService.createComment(postId, text);
+            setPosts((current) => current.map((item) => item.id === postId
+                ? {
+                    ...item,
+                    comments: item.comments.some((existing) => existing.id === comment.id)
+                        ? item.comments
+                        : [...item.comments, {
+                            id: comment.id,
+                            author: comment.author,
+                            text: comment.body,
+                            time: new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' })
+                                .format(new Date(comment.createdAt)),
+                        }],
+                    commentCount: item.commentCount + (item.comments.some((existing) => existing.id === comment.id) ? 0 : 1),
+                    commentsLoaded: true,
+                }
+                : item));
+            setCommentDrafts((current) => ({ ...current, [postId]: '' }));
+            setPersistenceError('');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Could not save this comment.';
+            setPostActionErrors((current) => ({ ...current, [postId]: message }));
+            setPersistenceError(message);
+        } finally {
+            commentLocks.current.delete(postId);
+            setSubmittingCommentIds((current) => {
+                const next = new Set(current);
+                next.delete(postId);
+                return next;
+            });
+        }
+    }
+
+    async function submitReport(contentType: 'post' | 'comment', targetId: string) {
+        const lockKey = `${contentType}:${targetId}`;
+        if (reportLocks.current.has(lockKey)) return;
+        reportLocks.current.add(lockKey);
+        setPersistenceError('');
+        setPersistenceSuccess('');
+        try {
+            await chatService.reportContent(contentType, targetId, reportReason);
+            setReportingTarget(null);
+            setPersistenceSuccess('Report submitted for moderator review.');
+        } catch (error) {
+            setPersistenceError(error instanceof Error ? error.message : 'Your report could not be submitted.');
+        } finally {
+            reportLocks.current.delete(lockKey);
+        }
+    }
+
+    async function moderateReport(
+        report: ModerationReport,
+        resolution: 'resolved' | 'dismissed',
+        hidden: boolean
+    ) {
+        if (moderationLock.current) return;
+        moderationLock.current = true;
+        setModerationError('');
+        try {
+            await chatService.reviewModerationReport(report, resolution, hidden);
+            setModerationReports((current) => current.filter((item) => item.id !== report.id
+                || item.contentType !== report.contentType));
+            try {
+                const hiddenItems = await chatService.listHiddenCommunityContent();
+                setHiddenContent(hiddenItems);
+                const loaded = await loadCommunityFeed();
+                setRooms(loaded.rooms);
+                setEngagementError(loaded.engagementError ?? '');
+                setPosts((current) => loaded.posts.map((post) => {
+                    const existing = current.find((item) => item.id === post.id);
+                    return existing
+                        ? { ...post, comments: existing.comments, commentsLoaded: existing.commentsLoaded,
+                            commentsLoading: false, showComments: existing.showComments }
+                        : post;
+                }));
+                if (report.contentType === 'comment') {
+                    const loadedComments = await chatService.listPostComments(report.postId);
+                    setPosts((current) => current.map((post) => post.id === report.postId
+                        ? {
+                            ...post,
+                            comments: loadedComments.map((comment) => ({
+                                id: comment.id,
+                                author: comment.author,
+                                text: comment.body,
+                                time: new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' })
+                                    .format(new Date(comment.createdAt)),
+                            })),
+                            commentCount: loadedComments.length,
+                            commentsLoaded: true,
+                        }
+                        : post));
+                }
+            } catch (error) {
+                setModerationError(error instanceof Error
+                    ? `Moderation action saved, but content could not be refreshed: ${error.message}`
+                    : 'Moderation action saved, but content could not be refreshed.');
+            }
+        } catch (error) {
+            setModerationError(error instanceof Error ? error.message : 'Could not apply this moderation action.');
+        } finally {
+            moderationLock.current = false;
+        }
+    }
+
+    async function restoreHiddenContent(content: HiddenCommunityContent) {
+        if (moderationLock.current) return;
+        moderationLock.current = true;
+        setModerationError('');
+        try {
+            await chatService.setCommunityContentVisibility(content.contentType, content.targetId, false);
+            setHiddenContent((current) => current.filter((item) =>
+                item.contentType !== content.contentType || item.targetId !== content.targetId));
+            const [hiddenItems, loaded] = await Promise.all([
+                chatService.listHiddenCommunityContent(),
+                loadCommunityFeed(),
+            ]);
+            setHiddenContent(hiddenItems);
+            setRooms(loaded.rooms);
+            setEngagementError(loaded.engagementError ?? '');
+            setPosts((current) => loaded.posts.map((post) => {
+                const existing = current.find((item) => item.id === post.id);
+                return existing
+                    ? { ...post, comments: existing.comments, commentsLoaded: existing.commentsLoaded,
+                        commentsLoading: false, showComments: existing.showComments }
+                    : post;
+            }));
+        } catch (error) {
+            setModerationError(error instanceof Error
+                ? error.message
+                : 'Could not restore this content.');
+        } finally {
+            moderationLock.current = false;
+        }
+    }
+
+    function reportControl(contentType: 'post' | 'comment', targetId: string) {
+        const active = reportingTarget?.type === contentType && reportingTarget.id === targetId;
+        return (
+            <span className="inline-flex items-center gap-1">
+                <button
+                    type="button"
+                    aria-label={`Report ${contentType}`}
+                    onClick={() => {
+                        setPersistenceError('');
+                        setReportingTarget(active ? null : { type: contentType, id: targetId });
+                    }}
+                    className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-ink/40 hover:bg-soft hover:text-primary"
+                >
+                    <Flag size={13} /> Report
+                </button>
+                {active && (
+                    <span className="inline-flex items-center gap-1">
+                        <select
+                            aria-label="Report reason"
+                            value={reportReason}
+                            onChange={(event) => {
+                                if (isCommunityReportReason(event.target.value)) {
+                                    setReportReason(event.target.value);
+                                }
+                            }}
+                            className="input h-8 w-auto py-0 text-xs"
+                        >
+                            <option value="harassment">Harassment</option>
+                            <option value="spam">Spam</option>
+                            <option value="unsafe_advice">Unsafe advice</option>
+                            <option value="personal_info">Personal information</option>
+                            <option value="other">Other</option>
+                        </select>
+                        <button
+                            type="button"
+                            onClick={() => void submitReport(contentType, targetId)}
+                            disabled={reportLocks.current.has(`${contentType}:${targetId}`)}
+                            className="btn-primary h-8 min-h-0 px-2 text-xs"
+                        >
+                            Send
+                        </button>
+                    </span>
+                )}
+            </span>
+        );
     }
 
     return (
@@ -170,15 +546,99 @@ export function Community() {
                 <textarea rows={3} value={newText} onChange={e => setNewText(e.target.value)} maxLength={280}
                     placeholder="Share something with the Circle… (anonymous)" className="input py-2 resize-none mb-3" />
                 <div className="flex items-center gap-3">
-                    <select value={newTopic} onChange={e => setNewTopic(e.target.value)} className="input w-auto text-sm">
+                    <select value={newTopic} onChange={e => {
+                        if (isCommunityTopic(e.target.value)) setNewTopic(e.target.value);
+                    }} className="input w-auto text-sm">
                         {TOPICS.filter(t => t !== 'All').map(t => <option key={t}>{t}</option>)}
                     </select>
                     <span className="text-xs text-ink/40 ml-auto">{280 - newText.length} left</span>
-                    <button onClick={addPost} disabled={!newText.trim()} className="btn-primary">
-                        <PlusCircle size={16} />Post
+                    <button onClick={() => void addPost()} disabled={!newText.trim() || sending || persistenceLoading || Boolean(feedError)} className="btn-primary">
+                        <PlusCircle size={16} />{sending ? 'Saving…' : 'Post'}
                     </button>
                 </div>
+                {persistenceLoading && <p role="status" className="mt-3 text-xs text-ink/50">Loading saved posts…</p>}
+                {persistenceError && <p role="alert" className="mt-3 text-sm text-red-700">{persistenceError}</p>}
+                {persistenceSuccess && <p role="status" className="mt-3 text-sm text-green-700">{persistenceSuccess}</p>}
+                {!persistenceLoading && !feedError && !roomForCommunityTopic(newTopic, rooms) && (
+                    <p className="mt-3 text-xs text-ink/50">
+                        {newTopic} does not have a matching community room, so posts in this topic cannot be saved.
+                    </p>
+                )}
             </div>
+
+            {isModerator && (
+                <section className="card mb-6" aria-label="Community moderation reports">
+                    <div className="mb-3 flex items-center justify-between">
+                        <h2 className="text-sm font-semibold text-ink">Moderator reports</h2>
+                        {moderationLoading && <span className="text-xs text-ink/50" role="status">Loading…</span>}
+                    </div>
+                    {moderationError && <p className="mb-3 text-sm text-red-700" role="alert">{moderationError}</p>}
+                    {!moderationLoading && moderationReports.length === 0 && (
+                        <p className="text-sm text-ink/50">No open reports.</p>
+                    )}
+                    <div className="space-y-3">
+                        {moderationReports.map((report) => (
+                            <article key={`${report.contentType}:${report.id}`} className="rounded-xl border border-soft p-3">
+                                <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-ink/50">
+                                    <span className="font-semibold text-primary">{report.contentType} report</span>
+                                    <span>{report.reason.replace(/_/g, ' ')}</span>
+                                    <time className="ml-auto">{new Date(report.createdAt).toLocaleString()}</time>
+                                </div>
+                                {report.context && (
+                                    <p className="mb-2 text-xs text-ink/50">On post: {report.context}</p>
+                                )}
+                                <p className="mb-3 whitespace-pre-wrap text-sm text-ink">{report.content}</p>
+                                <div className="flex flex-wrap gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => void moderateReport(report, 'resolved', !report.isHidden)}
+                                        className="btn-primary h-8 min-h-0 px-3 text-xs"
+                                    >
+                                        {report.isHidden ? 'Restore & resolve' : 'Hide & resolve'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => void moderateReport(report, 'dismissed', report.isHidden)}
+                                        className="btn-ghost h-8 min-h-0 px-3 text-xs"
+                                    >
+                                        Dismiss
+                                    </button>
+                                </div>
+                            </article>
+                        ))}
+                    </div>
+                    <div className="mt-5 border-t border-soft pt-4">
+                        <h3 className="mb-3 text-sm font-semibold text-ink">Hidden content</h3>
+                        {!moderationLoading && hiddenContent.length === 0 && (
+                            <p className="text-sm text-ink/50">No hidden content.</p>
+                        )}
+                        <div className="space-y-3">
+                            {hiddenContent.map((item) => (
+                                <article
+                                    key={`hidden:${item.contentType}:${item.targetId}`}
+                                    className="rounded-xl border border-soft p-3"
+                                >
+                                    <p className="mb-2 text-xs font-semibold text-primary">
+                                        Hidden {item.contentType}
+                                    </p>
+                                    {item.context && (
+                                        <p className="mb-2 text-xs text-ink/50">On post: {item.context}</p>
+                                    )}
+                                    <p className="mb-3 whitespace-pre-wrap text-sm text-ink">{item.content}</p>
+                                    <button
+                                        type="button"
+                                        onClick={() => void restoreHiddenContent(item)}
+                                        disabled={moderationLock.current}
+                                        className="btn-primary h-8 min-h-0 px-3 text-xs"
+                                    >
+                                        Restore
+                                    </button>
+                                </article>
+                            ))}
+                        </div>
+                    </div>
+                </section>
+            )}
 
             {/* Topic filter */}
             <div className="flex flex-wrap gap-2 mb-5">
@@ -192,10 +652,25 @@ export function Community() {
 
             {/* Feed */}
             <div className="space-y-4">
-                {filtered.length === 0 && (
+                {engagementError && (
+                    <div className="card text-sm text-red-700" role="alert">
+                        Likes and comment counts could not be loaded. {engagementError}
+                    </div>
+                )}
+                {!persistenceLoading && !feedError && filtered.length === 0 && (
                     <div className="card text-center py-10 text-ink/50">
                         <Users size={36} className="mx-auto mb-3 text-lavender" />
                         <p>No posts in this topic yet. Be the first!</p>
+                    </div>
+                )}
+                {persistenceLoading && (
+                    <div className="card text-center py-10 text-ink/50" role="status">
+                        Loading community posts…
+                    </div>
+                )}
+                {feedError && (
+                    <div className="card text-center py-10 text-red-700" role="alert">
+                        {feedError}
                     </div>
                 )}
                 {filtered.map(p => (
@@ -230,15 +705,18 @@ export function Community() {
 
                         {/* Actions */}
                         <div className="flex items-center gap-3 text-sm flex-wrap">
-                            <button onClick={() => toggleLike(p.id)}
+                            <button onClick={() => void toggleLike(p.id)}
+                                disabled={likingPostIds.has(p.id)}
+                                aria-label={p.liked ? 'Unlike post' : 'Like post'}
                                 className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 transition-all ${p.liked ? 'text-[#B42318] font-semibold' : 'text-ink/60 hover:text-primary hover:bg-soft'}`}>
                                 <Heart size={16} fill={p.liked ? '#B42318' : 'none'} />
                                 {p.likes > 0 && p.likes}
+                                {likingPostIds.has(p.id) && <span role="status">Saving…</span>}
                             </button>
-                            <button onClick={() => toggleComments(p.id)}
+                            <button onClick={() => void toggleComments(p.id)}
                                 className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-ink/60 hover:text-primary hover:bg-soft transition-all">
                                 <MessageCircle size={16} />
-                                {p.comments.length > 0 && p.comments.length}
+                                {p.commentCount > 0 && p.commentCount}
                                 <span>{p.showComments ? 'Hide' : 'Comment'}</span>
                             </button>
                             {/* Edit / Delete — only own posts */}
@@ -254,24 +732,32 @@ export function Community() {
                                     </button>
                                 </>
                             )}
+                            {p.isPersisted && reportControl('post', p.id)}
                         </div>
+                        {postActionErrors[p.id] && (
+                            <p className="mt-2 text-xs text-red-700" role="alert">{postActionErrors[p.id]}</p>
+                        )}
 
                         {/* Comments */}
                         {p.showComments && (
                             <div className="mt-4 border-t border-soft pt-4 space-y-3">
+                                {p.commentsLoading && <p className="text-xs text-ink/40" role="status">Loading comments…</p>}
                                 {p.comments.map(c => (
-                                    <div key={c.id} className="flex gap-2 text-sm">
+                                    <div key={c.id} className="flex flex-wrap items-center gap-2 text-sm">
                                         <span className="text-ink/40 font-medium shrink-0">{c.author}:</span>
                                         <span className="text-ink/80">{c.text}</span>
                                         <span className="ml-auto text-xs text-ink/30 shrink-0">{c.time}</span>
+                                        {reportControl('comment', c.id)}
                                     </div>
                                 ))}
-                                {p.comments.length === 0 && <p className="text-xs text-ink/40">No comments yet. Be the first!</p>}
+                                {p.commentsLoaded && !p.commentsLoading && p.comments.length === 0 && <p className="text-xs text-ink/40">No comments yet. Be the first!</p>}
                                 <div className="flex gap-2 mt-3">
                                     <input value={commentDrafts[p.id] ?? ''} onChange={e => setCommentDrafts({ ...commentDrafts, [p.id]: e.target.value })}
                                         placeholder="Reply…" className="input text-sm h-10" maxLength={200}
-                                        onKeyDown={e => e.key === 'Enter' && addComment(p.id)} />
-                                    <button onClick={() => addComment(p.id)} className="btn-primary px-3 min-h-0 h-10"><Send size={14} /></button>
+                                        onKeyDown={e => e.key === 'Enter' && void addComment(p.id)} />
+                                    <button onClick={() => void addComment(p.id)} disabled={!commentDrafts[p.id]?.trim() || !p.commentsLoaded || p.commentsLoading || submittingCommentIds.has(p.id)} aria-label="Send comment" className="btn-primary px-3 min-h-0 h-10">
+                                        {submittingCommentIds.has(p.id) ? 'Sending…' : <Send size={14} />}
+                                    </button>
                                 </div>
                             </div>
                         )}
