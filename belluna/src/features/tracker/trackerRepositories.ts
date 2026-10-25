@@ -98,9 +98,9 @@ export const symptomRepo: SymptomRepo = {
     const ownerId = await verifiedUserId(userId);
     let query = supabase
       .from('symptom_entries')
-      .select('id, log_date, symptom_code, severity')
+      .select('id, log_date, recorded_at, symptom_code, severity, note')
       .eq('user_id', ownerId)
-      .order('log_date', { ascending: false });
+      .order('recorded_at', { ascending: false });
     if (range) {
       query = query.gte('log_date', range.from).lte('log_date', range.to);
     }
@@ -110,22 +110,26 @@ export const symptomRepo: SymptomRepo = {
     return (data ?? []).map((row) => ({
       id: row.id,
       date: row.log_date,
+      recordedAt: row.recorded_at,
       code: row.symptom_code,
       severity: row.severity,
+      note: row.note,
     }));
   },
 
   async upsert(userId, input) {
     const ownerId = await verifiedUserId(userId);
-    validateSymptomEntry(input.date, input.code, input.severity);
+    validateSymptomEntry(input.date, input.recordedAt, input.code, input.severity, input.note ?? '');
     const { error } = await supabase.from('symptom_entries').upsert(
       {
         user_id: ownerId,
         log_date: input.date,
+        recorded_at: input.recordedAt,
         symptom_code: input.code,
         severity: input.severity,
+        note: input.note?.trim() || null,
       },
-      { onConflict: 'user_id,log_date,symptom_code' }
+      { onConflict: 'user_id,symptom_code,recorded_at' }
     );
     if (error) throwDatabaseError(error);
     await verifiedUserId(ownerId);

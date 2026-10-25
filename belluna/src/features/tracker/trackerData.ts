@@ -31,8 +31,10 @@ export type SymptomDefinition = {
 export type SymptomEntry = {
   id: string;
   date: string;
+  recordedAt: string;
   code: string;
   severity: number;
+  note: string | null;
 };
 
 export type TimelineItem = {
@@ -91,9 +93,22 @@ export const newCycleEntrySchema = z.object({
 });
 
 export const symptomEntrySchema = z.object({
-  date: isoDateSchema,
+  recordedAt: z.string().refine(
+    (value) => {
+      if (/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)) {
+        const parsed = new Date(value);
+        return !Number.isNaN(parsed.getTime())
+          && parsed.getFullYear() === Number(value.slice(0, 4))
+          && parsed.getMonth() + 1 === Number(value.slice(5, 7))
+          && parsed.getDate() === Number(value.slice(8, 10));
+      }
+      return z.string().datetime({ offset: true }).safeParse(value).success;
+    },
+    'Choose a valid date and time.'
+  ),
   code: z.string().trim().min(1, 'Choose a symptom.'),
   severity: z.number().int().min(1).max(5),
+  note: z.string().max(500, 'Symptom notes must be 500 characters or fewer.'),
 });
 
 export function validateCycleEntry(
@@ -107,8 +122,16 @@ export function validateCycleEntry(
   }
 }
 
-export function validateSymptomEntry(date: string, code: string, severity: number): void {
-  const parsed = symptomEntrySchema.safeParse({ date, code, severity });
+export function validateSymptomEntry(
+  date: string,
+  recordedAt: string,
+  code: string,
+  severity: number,
+  note = ''
+): void {
+  const parsedDate = isoDateSchema.safeParse(date);
+  if (!parsedDate.success) throw new Error(parsedDate.error.issues[0].message);
+  const parsed = symptomEntrySchema.safeParse({ recordedAt, code, severity, note });
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
 }
 

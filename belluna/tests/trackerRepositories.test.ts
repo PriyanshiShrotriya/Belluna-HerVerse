@@ -98,19 +98,75 @@ describe('authenticated tracker repositories', () => {
     const query = queryReturning({ data: null, error: null });
     await symptomRepo.upsert('synthetic-user-a', {
       date: '2026-02-01',
+      recordedAt: '2026-02-01T09:30:00.000Z',
       code: 'cramps',
       severity: 4,
+      note: 'Mild discomfort',
     });
     expect(mocks.from).toHaveBeenCalledWith('symptom_entries');
     expect(query.upsert).toHaveBeenCalledWith(
       {
         user_id: 'synthetic-user-a',
         log_date: '2026-02-01',
+        recorded_at: '2026-02-01T09:30:00.000Z',
         symptom_code: 'cramps',
         severity: 4,
+        note: 'Mild discomfort',
       },
-      { onConflict: 'user_id,log_date,symptom_code' }
+      { onConflict: 'user_id,symptom_code,recorded_at' }
     );
+  });
+
+  it('loads only the verified user’s symptoms newest first with notes and timestamps', async () => {
+    const query = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      order: vi.fn(),
+      gte: vi.fn(),
+      lte: vi.fn(),
+    };
+    query.select.mockReturnValue(query);
+    query.eq.mockReturnValue(query);
+    query.order.mockResolvedValue({
+      data: [{
+        id: 'symptom-1',
+        log_date: '2026-02-01',
+        recorded_at: '2026-02-01T09:30:00.000Z',
+        symptom_code: 'cramps',
+        severity: 4,
+        note: 'Mild discomfort',
+      }],
+      error: null,
+    });
+    mocks.from.mockReturnValue(query);
+
+    await expect(symptomRepo.list('synthetic-user-a')).resolves.toEqual([{
+      id: 'symptom-1',
+      date: '2026-02-01',
+      recordedAt: '2026-02-01T09:30:00.000Z',
+      code: 'cramps',
+      severity: 4,
+      note: 'Mild discomfort',
+    }]);
+    expect(query.eq).toHaveBeenCalledWith('user_id', 'synthetic-user-a');
+    expect(query.order).toHaveBeenCalledWith('recorded_at', { ascending: false });
+  });
+
+  it('deletes a symptom only when it belongs to the verified user', async () => {
+    const query = {
+      delete: vi.fn(),
+      eq: vi.fn(),
+    };
+    query.delete.mockReturnValue(query);
+    query.eq
+      .mockReturnValueOnce(query)
+      .mockResolvedValueOnce({ error: null });
+    mocks.from.mockReturnValue(query);
+
+    await expect(symptomRepo.remove('synthetic-user-a', 'symptom-1')).resolves.toBeUndefined();
+    expect(mocks.from).toHaveBeenCalledWith('symptom_entries');
+    expect(query.eq).toHaveBeenNthCalledWith(1, 'id', 'symptom-1');
+    expect(query.eq).toHaveBeenNthCalledWith(2, 'user_id', 'synthetic-user-a');
   });
 
   it('stops if the authenticated user changes while data is loading', async () => {

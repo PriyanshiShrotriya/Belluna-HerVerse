@@ -3,6 +3,7 @@ import {
   buildTimeline,
   calculateCycleStats,
   symptomFrequency,
+  symptomEntrySchema,
   validateCycleEntry,
   validateSymptomEntry,
   type CycleEntry,
@@ -65,11 +66,28 @@ describe('cycle validation and statistics', () => {
 });
 
 describe('symptom validation and timeline', () => {
+  it('accepts the actual symptom form values without a separate date field', () => {
+    expect(symptomEntrySchema.safeParse({
+      recordedAt: '2026-10-25T17:00',
+      code: 'cramps',
+      severity: 3,
+      note: '',
+    }).success).toBe(true);
+  });
+
+  it.each([
+    { recordedAt: 'not-a-date', code: 'cramps', severity: 3, note: '' },
+    { recordedAt: '2026-10-25T17:00', code: '', severity: 3, note: '' },
+    { recordedAt: '2026-10-25T17:00', code: 'cramps', severity: 6, note: '' },
+  ])('rejects invalid symptom form values: %o', (input) => {
+    expect(symptomEntrySchema.safeParse(input).success).toBe(false);
+  });
+
   it('validates symptom date and severity bounds', () => {
-    expect(() => validateSymptomEntry('2026-02-30', 'cramps', 3)).toThrow();
-    expect(() => validateSymptomEntry('2026-02-01', 'cramps', 6)).toThrow();
-    expect(() => validateSymptomEntry('2026-02-01', '', 3)).toThrow();
-    expect(() => validateSymptomEntry('2026-02-01', 'cramps', 1)).not.toThrow();
+    expect(() => validateSymptomEntry('2026-02-30', '2026-02-01T09:00:00.000Z', 'cramps', 3)).toThrow();
+    expect(() => validateSymptomEntry('2026-02-01', 'invalid', 'cramps', 3)).toThrow();
+    expect(() => validateSymptomEntry('2026-02-01', '2026-02-01T09:00:00.000Z', '', 3)).toThrow();
+    expect(() => validateSymptomEntry('2026-02-01', '2026-02-01T09:00:00.000Z', 'cramps', 1)).not.toThrow();
   });
 
   it('builds an ascending localized timeline and symptom frequency', () => {
