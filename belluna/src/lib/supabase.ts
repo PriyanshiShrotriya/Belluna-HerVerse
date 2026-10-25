@@ -1,13 +1,25 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const DEFAULT_SUPABASE_URL = 'https://example.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'demo-anon-key';
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    'Supabase configuration is missing. Check your .env.local file.'
-  );
+export function resolveSupabaseConfig(
+  env: Record<string, string | undefined> = import.meta.env
+) {
+  const supabaseUrl =
+    env.VITE_SUPABASE_URL || env.SUPABASE_URL || DEFAULT_SUPABASE_URL;
+  const supabaseAnonKey =
+    env.VITE_SUPABASE_ANON_KEY || env.SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY;
+
+  return { supabaseUrl, supabaseAnonKey };
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const { supabaseUrl, supabaseAnonKey } = resolveSupabaseConfig();
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+  },
+});

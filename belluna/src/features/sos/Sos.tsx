@@ -131,22 +131,22 @@ export default function Sos() {
 
   if (panel === null) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-pink-50 px-4 py-10">
+      <div className="min-h-screen bg-gradient-to-br from-[#f5f0ff] via-[#fff9fc] to-[#fceef4] px-4 py-8 sm:py-12">
         <div className="mx-auto max-w-lg">
           {/* Header */}
-          <div className="mb-8 text-center">
-            <div className="mb-3 inline-flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-purple-500 to-pink-500 shadow-lg shadow-purple-200">
+          <div className="mb-8 rounded-[2rem] border border-white/80 bg-white/75 p-6 text-center shadow-card backdrop-blur sm:p-8">
+            <div className="mx-auto mb-4 inline-flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-primary to-[#bd78ad] shadow-lg shadow-purple-200">
               <span className="text-3xl">🌸</span>
             </div>
-            <h1 className="text-3xl font-bold text-slate-800">{t('sos.title')}</h1>
-            <p className="mt-2 text-slate-500 text-sm">{t('sos.pick')}</p>
+            <h1 className="text-3xl font-semibold tracking-tight text-ink">{t('sos.title')}</h1>
+            <p className="mt-2 text-sm leading-6 text-ink/60">{t('sos.pick')}</p>
           </div>
 
           {/* 4 main cards */}
           <div className="grid gap-4">
             {CARDS.map(c => (
               <button key={c.key} onClick={() => setPanel(c.key)}
-                className={`group flex items-center gap-4 rounded-3xl ${c.bg} border ${c.border} px-5 py-4 text-left shadow-sm hover:shadow-md transition-all hover:-translate-y-0.5`}>
+                className={`group flex items-center gap-4 rounded-3xl ${c.bg} border ${c.border} px-5 py-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md`}>
                 <span className="text-3xl shrink-0">{c.emoji}</span>
                 <div className="flex-1 min-w-0">
                   <p className={`font-bold text-base ${c.color}`}>{t(`sos.c.${c.key}` as 'sos.c.unexpected')}</p>

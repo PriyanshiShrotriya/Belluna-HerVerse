@@ -9,6 +9,16 @@ import {
   CalendarHeart,
   BarChart2,
 } from 'lucide-react';
+import {
+  Bar,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { Link } from 'react-router-dom';
 import { getDailyLogs, saveDailyLog } from './dailyLogsService';
 import { useAuth } from '../../app/stubs/auth';
@@ -42,45 +52,34 @@ const DAY_EN = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 const DAY_HI = ['र', 'सो', 'मं', 'बु', 'गु', 'शु', 'श'];
 
 // ─── Mini Bar Chart Component ──────────────────────────────────────────────
-function BarChart({ data, label, color, maxVal = 3 }: { data: { date: string; val: number }[]; label: string; color: string; maxVal?: number }) {
+function TrendChart({ data, label, color, maxVal = 3, mood = false }: { data: { date: string; val: number }[]; label: string; color: string; maxVal?: number; mood?: boolean }) {
   if (!data.length) return null;
   const last30 = data.slice(-30);
   return (
-    <div>
-      <p className="text-xs font-semibold text-ink/60 mb-2 uppercase tracking-wide">{label}</p>
-      <div className="flex items-end gap-px h-14 overflow-hidden">
-        {last30.map((d, i) => {
-          const pct = maxVal > 0 ? (d.val / maxVal) * 100 : 0;
-          return (
-            <div key={i} className="group relative flex-1 flex items-end" title={`${d.date}: ${d.val}`}>
-              <div className="w-full rounded-t transition-all" style={{ height: `${Math.max(pct, d.val > 0 ? 8 : 0)}%`, background: d.val > 0 ? color : '#f1f0f7' }} />
-            </div>
-          );
-        })}
+    <div className="rounded-2xl border border-soft/70 bg-white/80 p-4 sm:p-5">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-ink">{label}</p>
+        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
       </div>
-      <p className="text-xs text-ink/40 mt-1">Last 30 logged days</p>
-    </div>
-  );
-}
-
-// ─── Mood Line Chart ───────────────────────────────────────────────────────
-function MoodChart({ data, label }: { data: { date: string; val: number }[]; label: string }) {
-  const last = data.slice(-20);
-  if (!last.length) return null;
-  const w = 100 / last.length;
-  const points = last.map((d, i) => `${(i * w + w / 2).toFixed(1)},${((5 - d.val) / 5) * 80 + 10}`).join(' ');
-  return (
-    <div>
-      <p className="text-xs font-semibold text-ink/60 mb-2 uppercase tracking-wide">{label}</p>
-      <svg viewBox="0 0 100 100" className="h-14 w-full" preserveAspectRatio="none">
-        <polyline fill="none" stroke="#A78BFA" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" points={points} />
-        {last.map((d, i) => (
-          <circle key={i} cx={(i * w + w / 2).toFixed(1)} cy={((5 - d.val) / 5) * 80 + 10} r="3" fill="#6D3AAE" />
-        ))}
-      </svg>
-      <div className="flex justify-between text-xs text-ink/40 mt-1">
-        <span>😢</span><span>😐</span><span>😄</span>
+      <div className="h-48 w-full" role="img" aria-label={`${label} trend across the last ${last30.length} logged days`}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={last30} margin={{ top: 8, right: 2, bottom: 0, left: -22 }}>
+            <CartesianGrid vertical={false} stroke="#eee8f5" strokeDasharray="3 5" />
+            <XAxis dataKey="date" tickFormatter={(date: string) => date.slice(5)} tickLine={false} axisLine={false} tick={{ fill: '#91879d', fontSize: 10 }} interval="preserveStartEnd" minTickGap={22} />
+            <YAxis domain={[0, maxVal]} allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: '#91879d', fontSize: 10 }} width={28} />
+            <Tooltip
+              cursor={{ fill: '#f6f1fb' }}
+              labelFormatter={(date) => String(date)}
+              formatter={(value) => [value, label]}
+              contentStyle={{ borderRadius: 12, border: '1px solid #eee8f5', boxShadow: '0 8px 28px rgba(49,30,69,.1)', fontSize: 12 }}
+            />
+            {mood
+              ? <Line type="monotone" dataKey="val" stroke={color} strokeWidth={3} dot={{ r: 3, fill: color, strokeWidth: 0 }} activeDot={{ r: 5 }} />
+              : <Bar dataKey="val" fill={color} radius={[5, 5, 0, 0]} maxBarSize={18} />}
+          </ComposedChart>
+        </ResponsiveContainer>
       </div>
+      <p className="mt-2 text-[11px] text-ink/45">Last {last30.length} logged days</p>
     </div>
   );
 }
@@ -103,7 +102,7 @@ export default function PeriodTracker() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [showCharts, setShowCharts] = useState(false);
+  const [showCharts, setShowCharts] = useState(true);
 
   useEffect(() => {
     if (!loading && userId && loadedUserId === userId) {
@@ -263,23 +262,28 @@ async function save() {
   const hasData = allEntries.length > 0;
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8">
-      <div className="flex flex-wrap items-center gap-3 mb-2 justify-between">
-        <div className="flex items-center gap-3">
-          <CalendarHeart className="text-primary" size={28} />
-          <h1 className="text-2xl font-semibold">Period Tracker</h1>
+    <div className="mx-auto max-w-7xl px-4 py-7 sm:px-6 sm:py-10">
+      <div className="mb-6 rounded-[2rem] bg-gradient-to-br from-[#f2ecff] via-[#fff8fc] to-[#fcecf4] p-5 sm:p-7">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div className="mb-3 flex items-center gap-3">
+              <span className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-primary shadow-sm"><CalendarHeart size={22} /></span>
+              <p className="text-xs font-semibold uppercase tracking-[.15em] text-primary/70">{lang === 'hi' ? 'आपका चक्र' : 'Your cycle, your way'}</p>
+            </div>
+            <h1 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">Period Tracker</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-ink/65">
+              {lang === 'hi'
+                ? 'तारीख टैप करके अपने लक्षण दर्ज करें। आपकी प्रविष्टियाँ आपके खाते से जुड़ी हैं।'
+                : 'Tap a date to log your symptoms and notice your personal patterns over time.'}
+            </p>
+          </div>
+          <button onClick={() => setShowCharts(!showCharts)} aria-pressed={showCharts}
+            className={`btn ${showCharts ? 'bg-primary text-white shadow-md shadow-primary/15' : 'bg-white text-primary hover:bg-soft'}`}>
+            <BarChart2 size={17} />
+            {t('tracker.charts')}
+          </button>
         </div>
-        <button onClick={() => setShowCharts(!showCharts)}
-          className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-all border ${showCharts ? 'bg-primary text-white border-primary' : 'bg-white border-soft text-primary hover:bg-soft'}`}>
-          <BarChart2 size={16} />
-          {t('tracker.charts')}
-        </button>
       </div>
-      <p className="text-ink/70 mb-6 text-sm">
-        {lang === 'hi'
-          ? 'तारीख टैप करके अपने लक्षण दर्ज करें। आपकी प्रविष्टियाँ आपके खाते से जुड़ी हैं।'
-          : 'Tap a date to log your symptoms and track your cycle. Your logs are linked to your signed-in account.'}
-      </p>
 
       {loading && (
         <p role="status" className="mb-4 text-sm text-ink/60">
@@ -297,33 +301,39 @@ async function save() {
 
       {/* Stats strip */}
       <div className="mb-6 max-w-xs">
-        <div className="card">
+        <div className="card flex items-center gap-4 border-lavender/30 bg-gradient-to-br from-white to-[#f8f4ff]">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-soft text-primary"><Droplets size={20} /></span>
+          <div>
           <p className="text-xs text-ink/60 mb-1">{lang === 'hi' ? 'दर्ज किए दिन' : 'Days logged'}</p>
-          <p className="text-2xl font-bold text-primary">{Object.keys(logs).filter(k => logs[k].flow > 0).length}</p>
+          <p className="text-2xl font-semibold text-primary">{Object.keys(logs).filter(k => logs[k].flow > 0).length}</p>
+          </div>
         </div>
       </div>
 
       {/* Charts panel */}
       {showCharts && (
-        <div className="card mb-6">
-          <h2 className="font-semibold text-base mb-1">{t('tracker.charts')}</h2>
-          <p className="text-xs text-ink/60 mb-5">{t('tracker.charts.sub')}</p>
+        <div className="card mb-6 border-lavender/20 bg-gradient-to-br from-white via-white to-[#faf7ff] p-4 sm:p-6">
+          <div className="mb-5 flex items-start gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-soft text-primary"><BarChart2 size={19} /></span>
+            <div><h2 className="font-semibold text-base">{t('tracker.charts')}</h2><p className="mt-1 text-xs leading-5 text-ink/55">{t('tracker.charts.sub')}</p></div>
+          </div>
           {!hasData ? (
-            <div className="text-center py-8 text-ink/50">
-              <BarChart2 size={36} className="mx-auto mb-3 text-lavender" />
+            <div className="rounded-2xl border border-dashed border-lavender/40 bg-white/70 py-9 text-center text-ink/55">
+              <BarChart2 size={34} className="mx-auto mb-3 text-lavender" />
               <p className="text-sm">{t('tracker.nodata')}</p>
+              <p className="mt-1 text-xs">Add a daily log to see your flow, pain and mood trends.</p>
             </div>
           ) : (
-            <div className="grid gap-6 sm:grid-cols-3">
-              <BarChart data={flowData} label={t('tracker.chart.flow')} color="#B42318" maxVal={4} />
-              <BarChart data={painData} label={t('tracker.chart.pain')} color="#F97316" maxVal={10} />
-              <MoodChart data={moodData} label={t('tracker.chart.mood')} />
+            <div className="grid gap-4 lg:grid-cols-3">
+              <TrendChart data={flowData} label={t('tracker.chart.flow')} color="#b94c72" maxVal={4} />
+              <TrendChart data={painData} label={t('tracker.chart.pain')} color="#df8a58" maxVal={10} />
+              <TrendChart data={moodData} label={t('tracker.chart.mood')} color="#7652ae" maxVal={5} mood />
             </div>
           )}
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-5 lg:grid-cols-2">
         {/* Calendar */}
         <div className="card">
           <div className="flex items-center justify-between mb-4">

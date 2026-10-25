@@ -3,19 +3,23 @@ dotenv.config({ path: '.env.local' });
 import express from 'express';
 import { createClient } from '@supabase/supabase-js';
 
+const DEFAULT_SUPABASE_URL = 'https://example.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'demo-anon-key';
+
 const app = express();
 const PORT = 8788;
 
 app.use(express.json({ limit: '10kb' }));
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+function resolveSupabaseConfig(env: NodeJS.ProcessEnv = process.env) {
+  const supabaseUrl = env.SUPABASE_URL || env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL;
+  const supabaseAnonKey =
+    env.SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    'Missing SUPABASE_URL or SUPABASE_ANON_KEY in .env.local'
-  );
+  return { supabaseUrl, supabaseAnonKey };
 }
+
+const { supabaseUrl, supabaseAnonKey } = resolveSupabaseConfig();
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', aiProviderEnabled: process.env.AI_PROVIDER_ENABLED === 'true' });
