@@ -4,13 +4,13 @@ import { Phone, MapPin, AlertCircle, ChevronRight, Navigation } from 'lucide-rea
 import { Link } from 'react-router-dom';
 import { useT } from '../../i18n/t';
 import { getCurrentLocation, searchLocation } from '../../lib/location';
+import { fetchOverpass } from '../../lib/overpass';
 
 type SosPanel = null | 'unexpected' | 'pad' | 'cramps' | 'urgent';
 
 type PharmacyResult = { id: string; name: string; lat: number; lon: number; dist: number };
 
 
-const OVERPASS = 'https://overpass-api.de/api/interpreter';
 const km = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
   const r = Math.PI / 180;
   const dx = (b.lon - a.lon) * r * Math.cos(((a.lat + b.lat) / 2) * r);
@@ -19,10 +19,9 @@ const km = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) =>
 };
 
 async function fetchPharmacies(p: { lat: number; lon: number }): Promise<PharmacyResult[]> {
-  const q = `[out:json][timeout:15];(nwr["amenity"="pharmacy"](around:3000,${p.lat},${p.lon}););out center tags 20;`;
-  const r = await fetch(OVERPASS, { method: 'POST', body: 'data=' + encodeURIComponent(q) });
-  if (!r.ok) throw new Error('overpass');
-  const j = await r.json() as { elements: { type: string; id: number; lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }[] };
+  const j = await fetchOverpass<{
+    elements: { type: string; id: number; lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }[];
+  }>('pharmacies', p);
   return j.elements.flatMap((e): PharmacyResult[] => {
     const lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
     if (lat == null || lon == null) return [];

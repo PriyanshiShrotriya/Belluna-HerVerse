@@ -4,6 +4,7 @@ import { MapPin, Navigation, Phone, Search, ShoppingBag, Heart, Cross, Filter } 
 import { useT } from '../../i18n/t';
 import { Loading, ErrorBox, Empty } from '../../components/States';
 import { getCurrentLocation, searchLocation } from '../../lib/location';
+import { fetchOverpass } from '../../lib/overpass';
 
 type FacilityType = 'hospital' | 'clinic' | 'doctors' | 'pharmacy' | 'gynaecologist';
 type Facility = {
@@ -19,7 +20,6 @@ type Pt = { lat: number; lon: number };
 
 type FilterTab = 'all' | 'healthcare' | 'pharmacy' | 'gynaecologist';
 
-const OVERPASS = 'https://overpass-api.de/api/interpreter';
 const cache = new Map<string, Facility[]>();
 
 const COLORS: Record<FacilityType, string> = {
@@ -60,16 +60,7 @@ async function fetchFacilities(p: Pt): Promise<Facility[]> {
   if (hit) return hit;
 
   // Query 1: healthcare facilities + pharmacies + gynaecology
-  const q = `[out:json][timeout:25];(
-    nwr["amenity"~"^(hospital|clinic|doctors|pharmacy)$"](around:5000,${p.lat},${p.lon});
-    nwr["healthcare"~"^(gynaecologist|midwife|maternity)$"](around:5000,${p.lat},${p.lon});
-    nwr["healthcare:speciality"~"gynaecology|obstetrics"](around:5000,${p.lat},${p.lon});
-  );out center tags 60;`;
-
-  const r = await fetch(OVERPASS, { method: 'POST', body: 'data=' + encodeURIComponent(q) });
-  if (!r.ok) throw new Error('overpass');
-
-  const j = (await r.json()) as {
+  const j = await fetchOverpass<{
     elements: {
       type: string;
       id: number;
@@ -78,7 +69,7 @@ async function fetchFacilities(p: Pt): Promise<Facility[]> {
       center?: Pt;
       tags?: Record<string, string>;
     }[];
-  };
+  }>('facilities', p);
 
   const seen = new Set<string>();
   const out = j.elements.flatMap((e): Facility[] => {
