@@ -124,6 +124,24 @@ describe('community feed persistence mapping', () => {
     );
   });
 
+  it('keeps loaded rooms and posts available when engagement loading fails', async () => {
+    mocks.getPostEngagement.mockRejectedValue(
+      new Error('Could not load post likes and comment counts. Please try again.')
+    );
+
+    const feed = await loadCommunityFeed();
+
+    expect(feed.rooms).toEqual(rooms);
+    expect(feed.posts).toHaveLength(rooms.length);
+    expect(feed.posts[0]).toMatchObject({
+      topic: 'PCOS',
+      isPersisted: true,
+      likes: 0,
+      commentCount: 0,
+    });
+    expect(feed.engagementError).toContain('Could not load post likes and comment counts.');
+  });
+
   it('maps every UI topic explicitly and leaves unsupported topics unmapped', () => {
     expect(roomForCommunityTopic('PCOS', rooms)?.id).toBe('room-pcos-uuid');
     expect(roomForCommunityTopic('Period Health', rooms)?.id).toBe('room-period-uuid');
@@ -171,7 +189,13 @@ describe('community feed persistence mapping', () => {
     });
   });
 
-  it('posts Nutrition and General to their matching database rooms', async () => {
+  it.each([
+    ['PCOS', 'room-pcos-uuid'],
+    ['Period Health', 'room-period-uuid'],
+    ['Mental Health', 'room-mental-uuid'],
+    ['Nutrition', 'room-nutrition-uuid'],
+    ['General', 'room-general-uuid'],
+  ] as const)('posts %s to its matching database room', async (topic, roomId) => {
     mocks.sendMessage.mockImplementation(async (roomId: string, body: string) => ({
       ...message,
       id: `message-${roomId}`,
@@ -179,13 +203,10 @@ describe('community feed persistence mapping', () => {
       body,
     }));
 
-    const nutritionPost = await createCommunityPost('Nutrition', 'Nutrition topic', rooms);
-    const generalPost = await createCommunityPost('General', 'General topic', rooms);
+    const post = await createCommunityPost(topic, `${topic} topic`, rooms);
 
-    expect(mocks.sendMessage).toHaveBeenNthCalledWith(1, 'room-nutrition-uuid', 'Nutrition topic');
-    expect(mocks.sendMessage).toHaveBeenNthCalledWith(2, 'room-general-uuid', 'General topic');
-    expect(nutritionPost).toMatchObject({ topic: 'Nutrition', text: 'Nutrition topic', isPersisted: true });
-    expect(generalPost).toMatchObject({ topic: 'General', text: 'General topic', isPersisted: true });
+    expect(mocks.sendMessage).toHaveBeenCalledWith(roomId, `${topic} topic`);
+    expect(post).toMatchObject({ topic, text: `${topic} topic`, isPersisted: true });
   });
 
   it('rejects topics without a corresponding active room and failed saves', async () => {

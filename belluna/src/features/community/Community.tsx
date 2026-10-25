@@ -89,8 +89,12 @@ export function Community() {
     const [rooms, setRooms] = useState<ChatRoom[]>([]);
     const [persistenceLoading, setPersistenceLoading] = useState(true);
     const [feedError, setFeedError] = useState('');
+    const [engagementError, setEngagementError] = useState('');
     const [persistenceError, setPersistenceError] = useState('');
     const [persistenceSuccess, setPersistenceSuccess] = useState('');
+    const [postActionErrors, setPostActionErrors] = useState<Record<string, string>>({});
+    const [likingPostIds, setLikingPostIds] = useState<Set<string>>(new Set());
+    const [submittingCommentIds, setSubmittingCommentIds] = useState<Set<string>>(new Set());
     const [reportingTarget, setReportingTarget] = useState<{ type: 'post' | 'comment'; id: string } | null>(null);
     const [reportReason, setReportReason] = useState<CommunityReportReason>('harassment');
     const [isModerator, setIsModerator] = useState(false);
@@ -116,11 +120,13 @@ export function Community() {
         async function loadPersistedPosts() {
             setPersistenceLoading(true);
             setFeedError('');
+            setEngagementError('');
             try {
                 const loaded = await loadCommunityFeed();
                 if (cancelled) return;
                 setRooms(loaded.rooms);
                 setPosts(loaded.posts);
+                setEngagementError(loaded.engagementError ?? '');
             } catch (error) {
                 if (!cancelled) {
                     setFeedError(error instanceof Error ? error.message : 'Could not load community posts.');
@@ -175,6 +181,10 @@ export function Community() {
     async function addPost() {
         const body = newText.trim();
         if (!body || sendLock.current) return;
+        if (feedError) {
+            setPersistenceError('Community rooms could not be loaded. Reload the page before posting.');
+            return;
+        }
         const room = roomForCommunityTopic(newTopic, rooms);
         if (!room) {
             setPersistenceError(`Posts for "${newTopic}" are not supported by the available community rooms.`);
@@ -194,6 +204,7 @@ export function Community() {
                 setRooms(loaded.rooms);
                 setPosts(loaded.posts);
                 setFeedError('');
+                setEngagementError(loaded.engagementError ?? '');
             } catch (error) {
                 setPersistenceError(error instanceof Error
                     ? `Post saved, but the feed could not be refreshed: ${error.message}`
@@ -238,6 +249,8 @@ export function Community() {
         }
         if (likeLocks.current.has(id)) return;
         likeLocks.current.add(id);
+        setLikingPostIds((current) => new Set(current).add(id));
+        setPostActionErrors((current) => ({ ...current, [id]: '' }));
         try {
             const engagement = post.liked
                 ? await chatService.unlikePost(id)
@@ -247,21 +260,30 @@ export function Community() {
                 : item));
             setPersistenceError('');
         } catch (error) {
-            setPersistenceError(error instanceof Error ? error.message : 'Could not update this like.');
+            const message = error instanceof Error ? error.message : 'Could not update this like.';
+            setPostActionErrors((current) => ({ ...current, [id]: message }));
+            setPersistenceError(message);
         } finally {
             likeLocks.current.delete(id);
+            setLikingPostIds((current) => {
+                const next = new Set(current);
+                next.delete(id);
+                return next;
+            });
         }
     }
 
     async function toggleComments(id: string) {
         const post = posts.find((item) => item.id === id);
         if (!post) return;
+        setPostActionErrors((current) => ({ ...current, [id]: '' }));
         setPosts((current) => current.map((item) => item.id === id
             ? { ...item, showComments: !item.showComments }
             : item));
         if (!post.isPersisted || post.commentsLoaded || post.showComments || commentLocks.current.has(id)) return;
 
         commentLocks.current.add(id);
+        setPostActionErrors((current) => ({ ...current, [id]: '' }));
         setPosts((current) => current.map((item) => item.id === id
             ? { ...item, commentsLoading: true }
             : item));
@@ -287,7 +309,9 @@ export function Community() {
             setPosts((current) => current.map((item) => item.id === id
                 ? { ...item, commentsLoading: false }
                 : item));
-            setPersistenceError(error instanceof Error ? error.message : 'Could not load comments.');
+            const message = error instanceof Error ? error.message : 'Could not load comments.';
+            setPostActionErrors((current) => ({ ...current, [id]: message }));
+            setPersistenceError(message);
         } finally {
             commentLocks.current.delete(id);
         }
@@ -296,16 +320,22 @@ export function Community() {
     async function addComment(postId: string) {
         const post = posts.find((item) => item.id === postId);
         if (!post?.isPersisted) {
-            setPersistenceError('Comments can only be added to saved community posts.');
+            const message = 'Comments can only be added to saved community posts.';
+            setPostActionErrors((current) => ({ ...current, [postId]: message }));
+            setPersistenceError(message);
             return;
         }
         if (!post.commentsLoaded) {
-            setPersistenceError('Load this post\'s comments before adding a comment.');
+            const message = 'Load this post\'s comments before adding a comment.';
+            setPostActionErrors((current) => ({ ...current, [postId]: message }));
+            setPersistenceError(message);
             return;
         }
         const text = commentDrafts[postId]?.trim();
         if (!text || commentLocks.current.has(postId)) return;
         commentLocks.current.add(postId);
+        setSubmittingCommentIds((current) => new Set(current).add(postId));
+        setPostActionErrors((current) => ({ ...current, [postId]: '' }));
         try {
             const comment = await chatService.createComment(postId, text);
             setPosts((current) => current.map((item) => item.id === postId
@@ -327,9 +357,16 @@ export function Community() {
             setCommentDrafts((current) => ({ ...current, [postId]: '' }));
             setPersistenceError('');
         } catch (error) {
-            setPersistenceError(error instanceof Error ? error.message : 'Could not save this comment.');
+            const message = error instanceof Error ? error.message : 'Could not save this comment.';
+            setPostActionErrors((current) => ({ ...current, [postId]: message }));
+            setPersistenceError(message);
         } finally {
             commentLocks.current.delete(postId);
+            setSubmittingCommentIds((current) => {
+                const next = new Set(current);
+                next.delete(postId);
+                return next;
+            });
         }
     }
 
@@ -367,6 +404,7 @@ export function Community() {
                 setHiddenContent(hiddenItems);
                 const loaded = await loadCommunityFeed();
                 setRooms(loaded.rooms);
+                setEngagementError(loaded.engagementError ?? '');
                 setPosts((current) => loaded.posts.map((post) => {
                     const existing = current.find((item) => item.id === post.id);
                     return existing
@@ -417,6 +455,7 @@ export function Community() {
             ]);
             setHiddenContent(hiddenItems);
             setRooms(loaded.rooms);
+            setEngagementError(loaded.engagementError ?? '');
             setPosts((current) => loaded.posts.map((post) => {
                 const existing = current.find((item) => item.id === post.id);
                 return existing
@@ -513,14 +552,14 @@ export function Community() {
                         {TOPICS.filter(t => t !== 'All').map(t => <option key={t}>{t}</option>)}
                     </select>
                     <span className="text-xs text-ink/40 ml-auto">{280 - newText.length} left</span>
-                    <button onClick={() => void addPost()} disabled={!newText.trim() || sending || persistenceLoading} className="btn-primary">
+                    <button onClick={() => void addPost()} disabled={!newText.trim() || sending || persistenceLoading || Boolean(feedError)} className="btn-primary">
                         <PlusCircle size={16} />{sending ? 'Saving…' : 'Post'}
                     </button>
                 </div>
                 {persistenceLoading && <p role="status" className="mt-3 text-xs text-ink/50">Loading saved posts…</p>}
                 {persistenceError && <p role="alert" className="mt-3 text-sm text-red-700">{persistenceError}</p>}
                 {persistenceSuccess && <p role="status" className="mt-3 text-sm text-green-700">{persistenceSuccess}</p>}
-                {!persistenceLoading && !roomForCommunityTopic(newTopic, rooms) && (
+                {!persistenceLoading && !feedError && !roomForCommunityTopic(newTopic, rooms) && (
                     <p className="mt-3 text-xs text-ink/50">
                         {newTopic} does not have a matching community room, so posts in this topic cannot be saved.
                     </p>
@@ -613,6 +652,11 @@ export function Community() {
 
             {/* Feed */}
             <div className="space-y-4">
+                {engagementError && (
+                    <div className="card text-sm text-red-700" role="alert">
+                        Likes and comment counts could not be loaded. {engagementError}
+                    </div>
+                )}
                 {!persistenceLoading && !feedError && filtered.length === 0 && (
                     <div className="card text-center py-10 text-ink/50">
                         <Users size={36} className="mx-auto mb-3 text-lavender" />
@@ -662,9 +706,12 @@ export function Community() {
                         {/* Actions */}
                         <div className="flex items-center gap-3 text-sm flex-wrap">
                             <button onClick={() => void toggleLike(p.id)}
+                                disabled={likingPostIds.has(p.id)}
+                                aria-label={p.liked ? 'Unlike post' : 'Like post'}
                                 className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 transition-all ${p.liked ? 'text-[#B42318] font-semibold' : 'text-ink/60 hover:text-primary hover:bg-soft'}`}>
                                 <Heart size={16} fill={p.liked ? '#B42318' : 'none'} />
                                 {p.likes > 0 && p.likes}
+                                {likingPostIds.has(p.id) && <span role="status">Saving…</span>}
                             </button>
                             <button onClick={() => void toggleComments(p.id)}
                                 className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-ink/60 hover:text-primary hover:bg-soft transition-all">
@@ -687,6 +734,9 @@ export function Community() {
                             )}
                             {p.isPersisted && reportControl('post', p.id)}
                         </div>
+                        {postActionErrors[p.id] && (
+                            <p className="mt-2 text-xs text-red-700" role="alert">{postActionErrors[p.id]}</p>
+                        )}
 
                         {/* Comments */}
                         {p.showComments && (
@@ -700,12 +750,14 @@ export function Community() {
                                         {reportControl('comment', c.id)}
                                     </div>
                                 ))}
-                                {!p.commentsLoading && p.comments.length === 0 && <p className="text-xs text-ink/40">No comments yet. Be the first!</p>}
+                                {p.commentsLoaded && !p.commentsLoading && p.comments.length === 0 && <p className="text-xs text-ink/40">No comments yet. Be the first!</p>}
                                 <div className="flex gap-2 mt-3">
                                     <input value={commentDrafts[p.id] ?? ''} onChange={e => setCommentDrafts({ ...commentDrafts, [p.id]: e.target.value })}
                                         placeholder="Reply…" className="input text-sm h-10" maxLength={200}
                                         onKeyDown={e => e.key === 'Enter' && void addComment(p.id)} />
-                                    <button onClick={() => void addComment(p.id)} disabled={!commentDrafts[p.id]?.trim() || !p.commentsLoaded || p.commentsLoading || commentLocks.current.has(p.id)} className="btn-primary px-3 min-h-0 h-10"><Send size={14} /></button>
+                                    <button onClick={() => void addComment(p.id)} disabled={!commentDrafts[p.id]?.trim() || !p.commentsLoaded || p.commentsLoading || submittingCommentIds.has(p.id)} aria-label="Send comment" className="btn-primary px-3 min-h-0 h-10">
+                                        {submittingCommentIds.has(p.id) ? 'Sending…' : <Send size={14} />}
+                                    </button>
                                 </div>
                             </div>
                         )}

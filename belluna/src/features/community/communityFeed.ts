@@ -1,4 +1,4 @@
-import { chatService, type ChatMessage, type ChatRoom } from './chatService';
+import { chatService, type ChatMessage, type ChatRoom, type PostEngagement } from './chatService';
 import { anonymousAlias } from './anonymousIdentity';
 export { anonymousAlias } from './anonymousIdentity';
 
@@ -93,6 +93,7 @@ export function mergePersistedPosts(
 export async function loadCommunityFeed(): Promise<{
     rooms: ChatRoom[];
     posts: CommunityFeedPost[];
+    engagementError?: string;
 }> {
     const rooms = await chatService.listRooms();
     const currentUserHandle = await chatService.currentUserHandle();
@@ -105,9 +106,18 @@ export async function loadCommunityFeed(): Promise<{
     const messages = roomMessages.flatMap(({ room, messages: roomRows }) =>
         roomRows.map((message) => ({ room, message }))
     );
-    const engagement = await chatService.getPostEngagement(messages.map(({ message }) => message.id));
+    let engagement: Record<string, PostEngagement> = {};
+    let engagementError: string | undefined;
+    try {
+        engagement = await chatService.getPostEngagement(messages.map(({ message }) => message.id));
+    } catch (error) {
+        engagementError = error instanceof Error
+            ? error.message
+            : 'Could not load post likes and comment counts.';
+    }
     return {
         rooms,
+        engagementError,
         posts: messages.map(({ room, message }) => {
             const post = toCommunityFeedPost(message, room, currentUserHandle);
             const summary = engagement[message.id];

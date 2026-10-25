@@ -91,6 +91,19 @@ describe('community chat service', () => {
     expect(mocks.rpc).not.toHaveBeenCalled();
   });
 
+  it('reports a like as unconfirmed when its engagement refresh fails', async () => {
+    const likeQuery = { insert: vi.fn().mockResolvedValue({ error: null }) };
+    mocks.from.mockReturnValue(likeQuery);
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'RPC unavailable' } });
+
+    await expect(chatService.likePost('post-1'))
+      .rejects.toThrow('Could not load post likes and comment counts.');
+    expect(likeQuery.insert).toHaveBeenCalledWith({ post_id: 'post-1' });
+    expect(mocks.rpc).toHaveBeenCalledWith('get_community_post_engagement', {
+      requested_post_ids: ['post-1'],
+    });
+  });
+
   it("confirms unliking only after the database reports the user's like removed", async () => {
     const query = {
       delete: vi.fn(),
@@ -146,6 +159,22 @@ describe('community chat service', () => {
     });
     expect(comments[0].author).toMatch(/^Anonymous /);
     expect(comments[0].author).not.toContain('belluna_private_handle');
+  });
+
+  it('surfaces a failed comments load so the feed does not treat it as empty', async () => {
+    const query = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      order: vi.fn(),
+    };
+    query.select.mockReturnValue(query);
+    query.eq.mockReturnValue(query);
+    query.order.mockResolvedValue({ data: null, error: { message: 'RLS denied' } });
+    mocks.from.mockReturnValue(query);
+
+    await expect(chatService.listPostComments('post-1'))
+      .rejects.toThrow('Could not load comments.');
+    expect(mocks.from).toHaveBeenCalledWith('chat_message_comments');
   });
 
   it('rejects empty comments without making a database request', async () => {
