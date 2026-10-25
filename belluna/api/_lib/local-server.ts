@@ -2,6 +2,7 @@
 import { createServer } from 'node:http';
 import explainHandler from '../explain';
 import newsHandler from '../awareness/news';
+import overpassHandler from '../overpass';
 
 const port = Number(process.env.API_PORT ?? 8788);
 
@@ -46,6 +47,14 @@ const server = createServer(async (request, response) => {
           method: request.method,
           query: Object.fromEntries(url.searchParams.entries()),
         },
+        vercelResponse,
+      );
+      return;
+    }
+
+    if (url.pathname === '/api/overpass') {
+      await overpassHandler(
+        { method: request.method, body },
         vercelResponse,
       );
       return;
