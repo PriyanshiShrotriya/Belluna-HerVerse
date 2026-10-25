@@ -3,6 +3,7 @@ import L from 'leaflet';
 import { Phone, MapPin, AlertCircle, ChevronRight, Navigation } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useT } from '../../i18n/t';
+import { getCurrentLocation, searchLocation } from '../../lib/location';
 
 type SosPanel = null | 'unexpected' | 'pad' | 'cramps' | 'urgent';
 
@@ -24,7 +25,7 @@ async function fetchPharmacies(p: { lat: number; lon: number }): Promise<Pharmac
   const j = await r.json() as { elements: { type: string; id: number; lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }[] };
   return j.elements.flatMap((e): PharmacyResult[] => {
     const lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
-    if (!lat || !lon) return [];
+    if (lat == null || lon == null) return [];
     return [{ id: `${e.type}${e.id}`, name: e.tags?.name ?? '', lat, lon, dist: km(p, { lat, lon }) }];
   }).sort((a, b) => a.dist - b.dist).slice(0, 10);
 }
@@ -55,6 +56,7 @@ function PadFinderPanel() {
   const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
   const [list, setList] = useState<PharmacyResult[]>([]);
   const [msg, setMsg] = useState('');
+  const [locationQuery, setLocationQuery] = useState('');
 
   useEffect(() => {
     if (!mapEl.current || map.current) return;
@@ -66,23 +68,58 @@ function PadFinderPanel() {
     return () => { map.current?.remove(); map.current = null; };
   }, []);
 
-  async function locate() {
-    if (!navigator.geolocation) { setMsg(t('sos.pad.denied')); return; }
+  async function search(p: { lat: number; lon: number }) {
     setState('loading');
-    navigator.geolocation.getCurrentPosition(async (g) => {
-      const p = { lat: g.coords.latitude, lon: g.coords.longitude };
-      try {
-        const results = await fetchPharmacies(p);
-        setList(results); setState('done');
-        layer.current?.clearLayers();
-        L.circleMarker([p.lat, p.lon], { radius: 9, color: '#6D3AAE', fillOpacity: 0.9 }).bindPopup('📍 You').addTo(layer.current!);
-        results.forEach(x => {
-          L.circleMarker([x.lat, x.lon], { radius: 7, color: '#E11D48', fillColor: '#E11D48', fillOpacity: 0.7 })
-            .bindPopup(`<strong>${x.name || 'Pharmacy'}</strong><br/>${x.dist.toFixed(1)} km`).addTo(layer.current!);
-        });
-        map.current?.setView([p.lat, p.lon], 14);
-      } catch { setState('error'); }
-    }, () => { setMsg(t('sos.pad.denied')); setState('idle'); }, { timeout: 10000 });
+    setMsg('');
+    try {
+      const results = await fetchPharmacies(p);
+      setList(results); setState('done');
+      layer.current?.clearLayers();
+      L.circleMarker([p.lat, p.lon], { radius: 9, color: '#6D3AAE', fillOpacity: 0.9 })
+        .bindPopup(`📍 ${t('sos.pad.searchCenter')}`).addTo(layer.current!);
+      results.forEach(x => {
+        L.circleMarker([x.lat, x.lon], { radius: 7, color: '#E11D48', fillColor: '#E11D48', fillOpacity: 0.7 })
+          .bindPopup(`<strong>${x.name || 'Pharmacy'}</strong><br/>${x.dist.toFixed(1)} km`).addTo(layer.current!);
+      });
+      map.current?.setView([p.lat, p.lon], 14);
+    } catch {
+      setState('error');
+    }
+  }
+
+  async function locate() {
+    setState('loading');
+    setMsg('');
+    try {
+      await search(await getCurrentLocation());
+    } catch {
+      setState('idle');
+      setMsg(t('sos.pad.denied'));
+    }
+  }
+
+  async function searchByLocation(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const query = locationQuery.trim();
+    if (!query) {
+      setMsg(t('sos.pad.locationRequired'));
+      return;
+    }
+
+    setState('loading');
+    setMsg('');
+    try {
+      const location = await searchLocation(query);
+      if (!location) {
+        setState('idle');
+        setMsg(t('sos.pad.locationNotFound'));
+        return;
+      }
+      await search(location);
+    } catch {
+      setState('idle');
+      setMsg(t('sos.pad.locationFail'));
+    }
   }
 
   return (
@@ -92,7 +129,23 @@ function PadFinderPanel() {
         className="flex items-center gap-2 rounded-2xl bg-primary px-5 py-3 text-sm font-semibold text-white shadow hover:bg-primary/90 transition-all disabled:opacity-60">
         <MapPin size={16} /> {state === 'loading' ? t('sos.pad.searching') : t('sos.pad.locate')}
       </button>
+      <form onSubmit={searchByLocation} className="flex gap-2">
+        <label htmlFor="pharmacy-location" className="sr-only">{t('sos.pad.location')}</label>
+        <input
+          id="pharmacy-location"
+          value={locationQuery}
+          onChange={(e) => setLocationQuery(e.target.value)}
+          className="input min-w-0 flex-1"
+          placeholder={t('sos.pad.locationPlaceholder')}
+          autoComplete="postal-code"
+        />
+        <button type="submit" disabled={state === 'loading'}
+          className="flex shrink-0 items-center gap-2 rounded-2xl border border-purple-200 bg-white px-4 py-3 text-sm font-semibold text-primary hover:bg-purple-50 transition-all disabled:opacity-60">
+          <MapPin size={16} /> {t('sos.pad.search')}
+        </button>
+      </form>
       {msg && <p className="text-sm text-slate-500">{msg}</p>}
+      {state === 'error' && <p role="alert" className="text-sm text-red-600">{t('sos.pad.fail')}</p>}
       <div ref={mapEl} className="h-56 rounded-2xl border border-purple-100 shadow-sm" />
       {state === 'done' && list.length === 0 && (
         <p className="text-sm text-slate-500 text-center py-4">{t('sos.pad.none')}</p>

@@ -3,6 +3,7 @@ import L from 'leaflet';
 import { MapPin, Navigation, Phone, Search, ShoppingBag, Heart, Cross, Filter } from 'lucide-react';
 import { useT } from '../../i18n/t';
 import { Loading, ErrorBox, Empty } from '../../components/States';
+import { getCurrentLocation, searchLocation } from '../../lib/location';
 
 type FacilityType = 'hospital' | 'clinic' | 'doctors' | 'pharmacy' | 'gynaecologist';
 type Facility = {
@@ -17,17 +18,6 @@ type Facility = {
 type Pt = { lat: number; lon: number };
 
 type FilterTab = 'all' | 'healthcare' | 'pharmacy' | 'gynaecologist';
-
-const CITIES: Record<string, Pt> = {
-  Delhi: { lat: 28.6139, lon: 77.209 },
-  Mumbai: { lat: 19.076, lon: 72.8777 },
-  Bengaluru: { lat: 12.9716, lon: 77.5946 },
-  Kolkata: { lat: 22.5726, lon: 88.3639 },
-  Chennai: { lat: 13.0827, lon: 80.2707 },
-  Hyderabad: { lat: 17.385, lon: 78.4867 },
-  Pune: { lat: 18.5204, lon: 73.8567 },
-  Jaipur: { lat: 26.9124, lon: 75.7873 },
-};
 
 const OVERPASS = 'https://overpass-api.de/api/interpreter';
 const cache = new Map<string, Facility[]>();
@@ -160,7 +150,7 @@ export default function Doctors() {
   const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
   const [list, setList] = useState<Facility[]>([]);
   const [msg, setMsg] = useState('');
-  const [city, setCity] = useState('Delhi');
+  const [locationQuery, setLocationQuery] = useState('');
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
 
   useEffect(() => {
@@ -198,7 +188,7 @@ export default function Doctors() {
       // User location pin
       L.circleMarker([p.lat, p.lon], {
         radius: 9, color: '#1e293b', fillColor: '#1e293b', fillOpacity: 0.9, weight: 2,
-      }).bindPopup('📍 Your location').addTo(layer.current!);
+      }).bindPopup(`📍 ${t('dr.searchCenter')}`).addTo(layer.current!);
 
       // Facility markers
       f.forEach((x) => {
@@ -216,14 +206,40 @@ export default function Doctors() {
     }
   }
 
-  const locate = () =>
-    navigator.geolocation
-      ? navigator.geolocation.getCurrentPosition(
-        (g) => search({ lat: g.coords.latitude, lon: g.coords.longitude }),
-        () => setMsg(t('dr.denied')),
-        { timeout: 10000 }
-      )
-      : setMsg(t('dr.denied'));
+  async function locate() {
+    setState('loading');
+    setMsg('');
+    try {
+      await search(await getCurrentLocation());
+    } catch {
+      setState('idle');
+      setMsg(t('dr.denied'));
+    }
+  }
+
+  async function searchByLocation(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const query = locationQuery.trim();
+    if (!query) {
+      setMsg(t('dr.locationRequired'));
+      return;
+    }
+
+    setState('loading');
+    setMsg('');
+    try {
+      const location = await searchLocation(query);
+      if (!location) {
+        setState('idle');
+        setMsg(t('dr.locationNotFound'));
+        return;
+      }
+      await search(location);
+    } catch {
+      setState('idle');
+      setMsg(t('dr.locationFail'));
+    }
+  }
 
   const visibleList = list.filter((f) => matchesFilter(f, activeTab));
 
@@ -251,21 +267,26 @@ export default function Doctors() {
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-primary/70">Use your location</p>
           <p className="mt-2 text-sm leading-6 text-ink/65">{t('dr.consent')}</p>
-          <button className="btn-primary mt-3" onClick={locate}>
+          <button className="btn-primary mt-3" onClick={locate} disabled={state === 'loading'}>
             <MapPin size={18} /> {t('dr.use')}
           </button>
         </div>
-        <div>
-          <label htmlFor="city" className="mb-1 block text-sm font-medium">{t('dr.city')}</label>
+        <form onSubmit={searchByLocation}>
+          <label htmlFor="care-location" className="mb-1 block text-sm font-medium">{t('dr.location')}</label>
           <div className="flex gap-2">
-            <select id="city" value={city} onChange={(e) => setCity(e.target.value)} className="input">
-              {Object.keys(CITIES).map((c) => <option key={c}>{c}</option>)}
-            </select>
-            <button className="btn-ghost flex items-center gap-1" onClick={() => search(CITIES[city])}>
+            <input
+              id="care-location"
+              value={locationQuery}
+              onChange={(e) => setLocationQuery(e.target.value)}
+              className="input min-w-0"
+              placeholder={t('dr.locationPlaceholder')}
+              autoComplete="postal-code"
+            />
+            <button className="btn-ghost flex shrink-0 items-center gap-1" type="submit" disabled={state === 'loading'}>
               <Search size={16} /> {t('dr.search')}
             </button>
           </div>
-        </div>
+        </form>
       </div>
 
       {msg && <p role="status" className="mb-3 text-sm text-ink/80">{msg}</p>}
